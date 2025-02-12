@@ -84,17 +84,10 @@ class Command(BaseCommand):
 
 
     def import_villages(self, df, catchment_lookup):
-        df["village_name_with_gvh"] = df["GVH"].fillna("") + " - " + df["village_name"].fillna("")
-
-        # Truncate if length exceeds 50 characters
-        df["village_name_with_gvh"] = df["village_name_with_gvh"].apply(
-            lambda x: (x[:47] + "...") if len(x) > 50 else x
-        )
-
-        distinct_villages = df[["catchment_code", "village_code", "village_name_with_gvh"]].drop_duplicates()
+        distinct_villages = df[["catchment_code", "village_code", "village_name"]].drop_duplicates()
         villages = []
         for _, row in distinct_villages.iterrows():
-            name = row["village_name_with_gvh"]
+            name = row["village_name"]
             code = row["village_code"]
             parent = catchment_lookup.get(row["catchment_code"])
             if not parent:
