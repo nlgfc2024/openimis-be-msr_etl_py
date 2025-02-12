@@ -21,11 +21,21 @@ class UBRAdapter(DataAdapter):
                 continue
 
             # TODO: add this to household json_ext
-            mobile_number = row.get("mobile_number", "").strip()
+            mobile_number = row.get("mobile_number")
+            if mobile_number:
+                mobile_number = mobile_number.strip()
 
             village = row.get("village", {})
             location_name = village.get('village_name')
             location_code = village.get('village_code')
+
+            gvh = village.get("group_village_head", {})
+            gvh_name = gvh.get('group_village_head_name')
+            gvh_code = gvh.get('group_village_head_code')
+
+            ta = gvh.get("traditional_authority", {})
+            ta_name = ta.get('traditional_authority_name')
+            ta_code = ta.get('traditional_authority_code')
 
             # TODO: add this to household json_ext
             pmt_score = row.get("pmt_score", "").strip()
@@ -55,6 +65,10 @@ class UBRAdapter(DataAdapter):
                     "household_mobile_number": mobile_number,
                     "household_pmt_score": pmt_score,
                     "household_wealth_quintile": wealth_quintile,
+                    "group_village_head_name": gvh_name,
+                    "group_village_head_code": gvh_code,
+                    "traditional_authority_name": ta_name,
+                    "traditional_authority_code": ta_code,
                 }
                 result.append(result_row)
 
@@ -73,6 +87,7 @@ class UBRAdapter(DataAdapter):
             "Own child": {"Male": "SON", "Female": "DAUGHTER"},
             "Parent": {"Male": "FATHER", "Female": "MOTHER"},
             "Grandparent": {"Male": "GRANDFATHER", "Female": "GRANDMOTHER"},
+            "Grandchild": {"Male": "GRANDSON", "Female": "GRANDDAUGHTER"},
             "Brother/Sister": {"Male": "BROTHER", "Female": "SISTER"},
         }
 

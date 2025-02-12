@@ -16,7 +16,22 @@ class UBRAdapterTestCase(TestCase):
             {
                 "form_number": " 12345 ",  # Ensure strip works
                 "mobile_number": "0987654321",
-                "village": {"village_name": "Test Village", "village_code": "V123"},
+                "village": {
+                    "village_name": "Test Village",
+                    "village_code": "2090551001",
+                    "group_village_head": {
+                        "group_village_head_code": "2090510",
+                        "group_village_head_name": "Test GVH",
+                        "traditional_authority": {
+                            "traditional_authority_code": "20905",
+                            "traditional_authority_name": "Test TA",
+                            "district": {
+                                "district_code": "209",
+                                "district_name": "Test District",
+                            }
+                        }
+                    }
+                },
                 "pmt_score": " 2.5 ",  # Ensure float conversion works
                 "pmt_cut_off": {"wealth_quintile": "Poorest"},
                 "household_members": [
@@ -74,7 +89,7 @@ class UBRAdapterTestCase(TestCase):
         self.assertEqual(head["individual_role"], "HEAD")
         self.assertEqual(head["group_code"], "12345")
         self.assertEqual(head["location_name"], "Test Village")
-        self.assertEqual(head["location_code"], "V123")
+        self.assertEqual(head["location_code"], "2090551001")
         self.assertEqual(head["ubr_id"], 1234)
         self.assertEqual(head["national_id"], "123456")
         self.assertEqual(head["fit_for_work"], 1)
@@ -82,6 +97,10 @@ class UBRAdapterTestCase(TestCase):
         self.assertEqual(head["household_mobile_number"], '0987654321')
         self.assertEqual(head["household_pmt_score"], 2.5)
         self.assertEqual(head["household_wealth_quintile"], "Poorest")
+        self.assertEqual(head["group_village_head_name"], "Test GVH")
+        self.assertEqual(head["group_village_head_code"], "2090510")
+        self.assertEqual(head["traditional_authority_name"], "Test TA")
+        self.assertEqual(head["traditional_authority_code"], "20905")
 
         self.assertEqual(transformed_data[1]["individual_role"], "SPOUSE")
         self.assertEqual(transformed_data[2]["individual_role"], "DAUGHTER")
