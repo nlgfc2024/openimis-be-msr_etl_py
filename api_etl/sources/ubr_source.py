@@ -43,6 +43,7 @@ class UBRSource(DataSource):
                 logger.debug(f"Fetching district {district_code}, percentile: {start_percentile} to {end_percentile}")
 
                 res = session.post(
+                    url,
                     headers=headers,
                     params={
                         "district_code": district_code,
@@ -65,5 +66,6 @@ class UBRSource(DataSource):
                 if rows:
                     prefix = f"batch_{district_code}_{start_percentile}_{end_percentile}_"
                     identifier = get_timestamped_batch_identifier(prefix)
+                    logger.debug(f"Sending {len(rows)} records to data adaptor to process")
                     yield rows, identifier
 
