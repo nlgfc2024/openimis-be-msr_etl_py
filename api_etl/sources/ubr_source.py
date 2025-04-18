@@ -1,5 +1,4 @@
 import logging
-
 import requests
 
 from api_etl.apps import ApiEtlConfig
@@ -11,6 +10,7 @@ from location.models import Location
 from api_etl.models import UBRRegion, UBRWealthQuintiles
 
 logger = logging.getLogger(__name__)
+
 
 class UBRSource(DataSource):
 
@@ -43,7 +43,6 @@ class UBRSource(DataSource):
         district_codes = Location.objects.filter(type='D', validity_to__isnull=True).values_list('code', flat=True)
 
         for district_code in district_codes:
-            # Iterate over each wealth quintile individually
             for wealth_quintile in [
                 UBRWealthQuintiles.POOREST.value,
                 UBRWealthQuintiles.POORER.value,
@@ -62,7 +61,7 @@ class UBRSource(DataSource):
                             "district_code": district_code,
                             "lower_percentile_category": start_percentile,
                             "upper_percentile_category": end_percentile,
-                            "wealth_quintiles": wealth_quintile,  # Send one wealth quintile at a time
+                            "wealth_quintiles": wealth_quintile,
                         }
                     )
 
@@ -105,40 +104,32 @@ class UBRLocationSource(DataSource):
 
         session = requests.Session()
 
-        # Ensure all regions are created in the database
         self.ensure_regions_exist()
 
-        # Fetch districts from the API
         district_rows = self.fetch_districts_from_api(session, url, headers)
         
-        # Yield districts with data_type="D"
         prefix = f"batch_districts_"
         identifier = get_timestamped_batch_identifier(prefix)
         logger.debug(f"Sending {len(district_rows)} district records to data adaptor to process")
         yield {"data_type": "D", "data": district_rows}, identifier
 
-        # Fetch TAs and Villages for each district
         for district in district_rows:
             district_code = district.get("geo_location_code")
             if not district_code:
                 logger.warning("Skipping district due to missing geo_location_code")
                 continue
 
-            # Fetch TAs
             logger.info(f"Fetching TAs for district: {district_code}")
             ta_rows = self.fetch_tas_from_api(session, url, headers, district_code)
 
-            # Yield TAs with data_type="W"
             prefix = f"batch_tas_{district_code}_"
             identifier = get_timestamped_batch_identifier(prefix)
             logger.debug(f"Sending {len(ta_rows)} TA records to data adaptor to process")
             yield {"data_type": "W", "data": ta_rows}, identifier
 
-            # Fetch Villages
             logger.info(f"Fetching Villages for district: {district_code}")
             village_rows = self.fetch_villages_from_api(session, url, headers, district_code)
 
-            # Yield Villages with data_type="V"
             prefix = f"batch_villages_{district_code}_"
             identifier = get_timestamped_batch_identifier(prefix)
             logger.debug(f"Sending {len(village_rows)} Village records to data adaptor to process")
@@ -146,17 +137,13 @@ class UBRLocationSource(DataSource):
 
     @staticmethod
     def ensure_regions_exist():
-        """
-        Ensure all regions defined in UBRRegion are created in the database.
-        """
         for region in UBRRegion:
-            region_code = str(region.value)  # Convert region value to string
+            region_code = str(region.value)
             region_name = region.label
 
-            # Check if the region already exists
             region_obj, created = Location.objects.get_or_create(
                 code=region_code,
-                type="R",  # Type 'R' for region
+                type="R",
                 defaults={"name": region_name},
             )
 
@@ -167,10 +154,7 @@ class UBRLocationSource(DataSource):
 
     @staticmethod
     def fetch_districts_from_api(session, url, headers):
-        """
-        Helper function to fetch districts from the get_geo_locations API.
-        """
-        params = {"geo_location_type_id": 1}  # Query parameter to fetch districts
+        params = {"geo_location_type_id": 1}
         logger.info(f"Fetching districts from {url} with params: {params}")
 
         res = session.post(url, headers=headers, json=params)
@@ -195,12 +179,9 @@ class UBRLocationSource(DataSource):
 
     @staticmethod
     def fetch_tas_from_api(session, url, headers, district_code):
-        """
-        Helper function to fetch Traditional Authorities (TAs) for a given district.
-        """
         params = {
-            "geo_location_type_id": 2,  # Query parameter to fetch TAs
-            "district_code": district_code,  # District code to filter TAs
+            "geo_location_type_id": 2,
+            "district_code": district_code,
         }
         logger.info(f"Fetching TAs from {url} with params: {params}")
 
@@ -226,12 +207,9 @@ class UBRLocationSource(DataSource):
 
     @staticmethod
     def fetch_villages_from_api(session, url, headers, district_code):
-        """
-        Helper function to fetch Villages for a given district.
-        """
         params = {
-            "geo_location_type_id": 11,  # Query parameter to fetch Villages
-            "district_code": district_code,  # District code to filter Villages
+            "geo_location_type_id": 11,
+            "district_code": district_code,
         }
         logger.info(f"Fetching Villages from {url} with params: {params}")
 
