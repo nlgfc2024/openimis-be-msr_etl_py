@@ -5,7 +5,7 @@ from api_etl.sources import DataSource, UBRSource, UBRLocationSource
 from core.models import User
 
 
-class UBRService(ETLService):
+class UBRIndividualService(ETLService):
 
     def __init__(self,
                  user: User,
