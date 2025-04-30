@@ -1,3 +1,3 @@
 from api_etl.adapters.base import DataAdapter
 from api_etl.adapters.exampleIndividialAdapter import ExampleIndividualAdapter
-from api_etl.adapters.ubr_adapter import UBRAdapter, UBRLocationAdapter
+from api_etl.adapters.ubr_adapter import UBRIndividualAdapter, UBRLocationAdapter

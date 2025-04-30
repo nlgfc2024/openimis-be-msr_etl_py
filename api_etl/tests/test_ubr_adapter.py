@@ -2,14 +2,14 @@ import logging
 from unittest import TestCase
 from unittest.mock import patch
 
-from api_etl.adapters.ubr_adapter import UBRAdapter
+from api_etl.adapters.ubr_adapter import UBRIndividualAdapter
 
 logger = logging.getLogger(__name__)
 
 class UBRAdapterTestCase(TestCase):
 
     def setUp(self):
-        self.adapter = UBRAdapter()
+        self.adapter = UBRIndividualAdapter()
 
     def test_transform_valid_data(self):
         data = [
@@ -114,7 +114,7 @@ class UBRAdapterTestCase(TestCase):
         self.assertEqual(len(transformed_data), 0)
 
     def test_transform_handles_none_data(self):
-        with self.assertRaises(UBRAdapter.Error) as cm:
+        with self.assertRaises(UBRIndividualAdapter.Error) as cm:
             self.adapter.transform(None)
 
         self.assertEqual(str(cm.exception), "Invalid input, expect input not to be None")

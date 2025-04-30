@@ -5,7 +5,7 @@ from django.test import TestCase
 
 from api_etl.apps import ApiEtlConfig
 from api_etl.auth_provider import get_auth_provider
-from api_etl.sources import UBRSource
+from api_etl.sources import UBRIndividualSource
 from core.test_helpers import create_test_interactive_user
 
 MOCKED_UBR_RESPONSE_DATA = [
@@ -34,7 +34,7 @@ class UBRSourceTestCase(TestCase):
         ]
 
         user = create_test_interactive_user(username="test_admin")
-        source = UBRSource(get_auth_provider('noauth'), pmt_percentile_range=range(0, 3))
+        source = UBRIndividualSource(get_auth_provider('noauth'), pmt_percentile_range=range(0, 3))
 
         pulled_data = []
         identifiers = []

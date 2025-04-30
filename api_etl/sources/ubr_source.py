@@ -12,7 +12,7 @@ from api_etl.models import UBRRegion, UBRWealthQuintiles
 logger = logging.getLogger(__name__)
 
 
-class UBRSource(DataSource):
+class UBRIndividualSource(DataSource):
 
     def __init__(
         self,

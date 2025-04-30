@@ -7,7 +7,7 @@ from location.models import Location
 logger = logging.getLogger(__name__)
 
 
-class UBRAdapter(DataAdapter):
+class UBRIndividualAdapter(DataAdapter):
 
     def transform(self, data: Iterable[Any]) -> Iterable[Any]:
         result = []
@@ -81,7 +81,7 @@ class UBRAdapter(DataAdapter):
 
     @staticmethod
     def parse_individual_role(member_dict):
-        gender = UBRAdapter.parse_gender(member_dict)
+        gender = UBRIndividualAdapter.parse_gender(member_dict)
         role_name = member_dict.get("relationship", {}).get("parameter_name", "")
 
         role_mapping = {
