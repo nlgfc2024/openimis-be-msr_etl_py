@@ -1,12 +1,13 @@
 import logging
 from unittest import TestCase
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
-from api_etl.adapters.ubr_adapter import UBRIndividualAdapter
+from api_etl.adapters.ubr_adapter import UBRIndividualAdapter, UBRLocationAdapter
 
 logger = logging.getLogger(__name__)
 
-class UBRAdapterTestCase(TestCase):
+
+class UBRIndividualAdapterTestCase(TestCase):
 
     def setUp(self):
         self.adapter = UBRIndividualAdapter()
@@ -136,3 +137,102 @@ class UBRAdapterTestCase(TestCase):
         role = self.adapter.parse_individual_role(member)
 
         self.assertEqual(role, "UNCLE")
+
+
+class UBRLocationAdapterTestCase(TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.adapter = UBRLocationAdapter()
+
+    def setUp(self):
+        self.mocked_district_data = {
+            "data_type": "D",
+            "data": [
+                {"geo_location_code": "101", "geo_location_name": "Chitipa"},
+                {"geo_location_code": "102", "geo_location_name": "Karonga"},
+            ],
+        }
+
+        self.mocked_ta_data = {
+            "data_type": "W",
+            "data": [
+                {"geo_location_code": "10101", "geo_location_name": "Kameme", "parent_geo_location_code": "101"},
+                {"geo_location_code": "10201", "geo_location_name": "Karonga TA1", "parent_geo_location_code": "102"},
+            ],
+        }
+
+        self.mocked_village_data = {
+            "data_type": "V",
+            "data": [
+                {"geo_location_code": "1010101", "geo_location_name": "Mweniyanga II", "parent_geo_location_code": "10101"},
+                {"geo_location_code": "1020101", "geo_location_name": "Karonga Village 1", "parent_geo_location_code": "10201"},
+            ],
+        }
+
+    @patch("location.models.Location.objects.get")
+    def test_transform_districts(self, mock_get):
+        # Mock the database query for regions
+        mock_get.side_effect = [
+            MagicMock(code="1", name="Northern", type="R"),  # Region for district 101
+            MagicMock(code="1", name="Northern", type="R"),  # Region for district 102
+        ]
+
+        transformed_data = self.adapter.transform(self.mocked_district_data)
+
+        self.assertEqual(len(transformed_data), 2)
+        self.assertEqual(transformed_data[0]["code"], "101")
+        self.assertEqual(transformed_data[0]["name"], "Chitipa")
+        self.assertEqual(transformed_data[0]["type"], "D")
+        self.assertEqual(transformed_data[0]["parent"].code, "1")
+
+    @patch("location.models.Location.objects.get")
+    def test_transform_tas(self, mock_get):
+        # Mock the database query for districts
+        mock_get.side_effect = [
+            MagicMock(code="101", name="Chitipa", type="D"),  # District for TA 10101
+            MagicMock(code="102", name="Karonga", type="D"),  # District for TA 10201
+        ]
+
+        transformed_data = self.adapter.transform(self.mocked_ta_data)
+
+        self.assertEqual(len(transformed_data), 2)
+        self.assertEqual(transformed_data[0]["code"], "10101")
+        self.assertEqual(transformed_data[0]["name"], "Kameme")
+        self.assertEqual(transformed_data[0]["type"], "W")
+        self.assertEqual(transformed_data[0]["parent"].code, "101")
+
+    @patch("location.models.Location.objects.get")
+    def test_transform_villages(self, mock_get):
+        # Mock the database query for TAs
+        mock_get.side_effect = [
+            MagicMock(code="10101", name="Kameme", type="W"),  # TA for Village 1010101
+            MagicMock(code="10201", name="Karonga TA1", type="W"),  # TA for Village 1020101
+        ]
+
+        transformed_data = self.adapter.transform(self.mocked_village_data)
+
+        self.assertEqual(len(transformed_data), 2)
+        self.assertEqual(transformed_data[0]["code"], "1010101")
+        self.assertEqual(transformed_data[0]["name"], "Mweniyanga II")
+        self.assertEqual(transformed_data[0]["type"], "V")
+        self.assertEqual(transformed_data[0]["parent"].code, "10101")
+
+    def test_transform_no_data(self):
+        empty_data = {"data_type": "D", "data": []}
+        transformed_data = self.adapter.transform(empty_data)
+        self.assertEqual(len(transformed_data), 0)
+
+    def test_transform_invalid_data_type(self):
+        invalid_data = {"data_type": "X", "data": [{"geo_location_code": "999", "geo_location_name": "Invalid"}]}
+        transformed_data = self.adapter.transform(invalid_data)
+        self.assertEqual(len(transformed_data), 0)
+
+    def test_transform_handles_none_data(self):
+        with self.assertRaises(UBRLocationAdapter.Error) as cm:
+            self.adapter.transform(None)
+
+        self.assertEqual(str(cm.exception), "Invalid input, expect input not to be None")
+
+

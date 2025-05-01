@@ -28,7 +28,7 @@ class LocationImportSink(DataSink):
         all_codes = [record.get("code") for record in data if record.get("code")]
 
         # Fetch existing locations in bulk
-        existing_locations = Location.objects.filter(code__in=all_codes).only("code")
+        existing_locations = Location.objects.filter(code__in=all_codes)
         existing_location_codes = set(existing_locations.values_list("code", flat=True))
 
         new_records = []
