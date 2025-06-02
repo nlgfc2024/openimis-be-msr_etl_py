@@ -6,7 +6,7 @@ from django.test import TestCase
 
 from api_etl.apps import ApiEtlConfig
 from api_etl.auth_provider import get_auth_provider
-from api_etl.services import ExampleIndividualETLService
+from api_etl.services.exampleIndividualETLService import ExampleIndividualETLService
 from api_etl.sources import ExampleIndividualSource
 from core.test_helpers import LogInHelper
 from individual.models import Individual

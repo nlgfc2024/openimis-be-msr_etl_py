@@ -2,11 +2,12 @@ import logging
 from typing import Any, Iterable
 
 from api_etl.adapters.base import DataAdapter
-from api_etl.apps import ApiEtlConfig
+from location.models import Location
 
 logger = logging.getLogger(__name__)
 
-class UBRAdapter(DataAdapter):
+
+class UBRIndividualAdapter(DataAdapter):
 
     def transform(self, data: Iterable[Any]) -> Iterable[Any]:
         result = []
@@ -80,7 +81,7 @@ class UBRAdapter(DataAdapter):
 
     @staticmethod
     def parse_individual_role(member_dict):
-        gender = UBRAdapter.parse_gender(member_dict)
+        gender = UBRIndividualAdapter.parse_gender(member_dict)
         role_name = member_dict.get("relationship", {}).get("parameter_name", "")
 
         role_mapping = {
@@ -100,3 +101,77 @@ class UBRAdapter(DataAdapter):
             logger.warning(f"Unknown role {role_name}")
 
         return role_name.upper()
+
+
+class UBRLocationAdapter(DataAdapter):
+
+    def transform(self, data: dict) -> Iterable[Any]:
+        if data is None:
+            raise self.Error("Invalid input, expect input not to be None")
+
+        location_cache = {}
+        data_type = data.get("data_type")
+        records = data.get("data", [])
+        if not records:
+            logger.warning("No records to process")
+            return []
+
+        result = []
+        for row in records:
+            location_data = self._process_location(row, data_type, location_cache)
+            if location_data:
+                result.append(location_data)
+        return result
+
+    def _process_location(self, row: dict, data_type: str, location_cache: dict) -> dict:
+        geo_location_code = row.get("geo_location_code")
+        geo_location_name = row.get("geo_location_name")
+        parent_geo_location_code = row.get("parent_geo_location_code")
+
+        if not geo_location_code or not geo_location_name:
+            logger.warning(f"Skipping {data_type} due to missing geo_location_code or geo_location_name")
+            return None
+
+        # Determine parent info based on type
+        if data_type == "D":
+            parent_code = geo_location_code[0]
+            parent_type = "R"
+        elif data_type == "W":
+            if not parent_geo_location_code:
+                logger.warning("Skipping TA due to missing parent_geo_location_code")
+                return None
+            parent_code = parent_geo_location_code
+            parent_type = "D"
+        elif data_type == "V":
+            if not parent_geo_location_code:
+                logger.warning("Skipping Village due to missing parent_geo_location_code")
+                return None
+            parent_code = parent_geo_location_code[:5]
+            parent_type = "W"
+        else:
+            logger.warning(f"Unknown data type: {data_type}")
+            return None
+
+        parent = self._get_or_cache_location(parent_code, parent_type, location_cache)
+        if not parent:
+            logger.error(f"Parent with code {parent_code} and type {parent_type} not found for {data_type} {geo_location_code}")
+            return None
+
+        return {
+            "code": geo_location_code,
+            "name": geo_location_name,
+            "type": data_type,
+            "parent": parent,
+        }
+
+    def _get_or_cache_location(self, location_code: str, location_type: str, location_cache: dict) -> Location:
+        if location_code not in location_cache:
+            try:
+                location = Location.objects.get(code=location_code, type=location_type, validity_to__isnull=True)
+                location_cache[location_code] = location
+                logger.debug(f"Cached location: {location_code} -> {location.name}")
+            except Location.DoesNotExist:
+                logger.error(f"Location with code {location_code} and type {location_type} not found in the database.")
+                return None
+
+        return location_cache.get(location_code)
