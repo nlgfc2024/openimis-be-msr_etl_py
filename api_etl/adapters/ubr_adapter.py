@@ -109,9 +109,7 @@ class UBRLocationAdapter(DataAdapter):
         if data is None:
             raise self.Error("Invalid input, expect input not to be None")
 
-        # Cache for region, district, and TA locations to avoid repeated DB queries
         location_cache = {}
-
         data_type = data.get("data_type")
         records = data.get("data", [])
         if not records:
@@ -120,86 +118,50 @@ class UBRLocationAdapter(DataAdapter):
 
         result = []
         for row in records:
-            if data_type == "D":
-                location_data = self._process_district(row, location_cache)
-            elif data_type == "W":
-                location_data = self._process_ta(row, location_cache)
-            elif data_type == "V":
-                location_data = self._process_village(row, location_cache)
-            else:
-                logger.warning(f"Unknown data type: {data_type}")
-                continue
-
+            location_data = self._process_location(row, data_type, location_cache)
             if location_data:
                 result.append(location_data)
-
         return result
 
-    def _process_district(self, row: dict, location_cache: dict) -> dict:
+    def _process_location(self, row: dict, data_type: str, location_cache: dict) -> dict:
         geo_location_code = row.get("geo_location_code")
         geo_location_name = row.get("geo_location_name")
+        parent_geo_location_code = row.get("parent_geo_location_code")
 
         if not geo_location_code or not geo_location_name:
-            logger.warning("Skipping district due to missing geo_location_code or geo_location_name")
+            logger.warning(f"Skipping {data_type} due to missing geo_location_code or geo_location_name")
             return None
 
-        # Determine the region code from the first character of the geo_location_code
-        region_code = geo_location_code[0]
-
-        region = self._get_or_cache_location(region_code, "R", location_cache)
-        if not region:
-            logger.error(f"Region with code {region_code} not found for district {geo_location_code}")
+        # Determine parent info based on type
+        if data_type == "D":
+            parent_code = geo_location_code[0]
+            parent_type = "R"
+        elif data_type == "W":
+            if not parent_geo_location_code:
+                logger.warning("Skipping TA due to missing parent_geo_location_code")
+                return None
+            parent_code = parent_geo_location_code
+            parent_type = "D"
+        elif data_type == "V":
+            if not parent_geo_location_code:
+                logger.warning("Skipping Village due to missing parent_geo_location_code")
+                return None
+            parent_code = parent_geo_location_code[:5]
+            parent_type = "W"
+        else:
+            logger.warning(f"Unknown data type: {data_type}")
             return None
 
-        return {
-            "code": geo_location_code,
-            "name": geo_location_name,
-            "type": "D",
-            "parent": region,
-        }
-
-    def _process_ta(self, row: dict, location_cache: dict) -> dict:
-        geo_location_code = row.get("geo_location_code")
-        geo_location_name = row.get("geo_location_name")
-        parent_geo_location_code = row.get("parent_geo_location_code")
-
-        if not geo_location_code or not geo_location_name or not parent_geo_location_code:
-            logger.warning("Skipping TA due to missing geo_location_code, geo_location_name, or parent_geo_location_code")
-            return None
-
-        parent_district = self._get_or_cache_location(parent_geo_location_code, "D", location_cache)
-        if not parent_district:
-            logger.error(f"Parent district with code {parent_geo_location_code} not found for TA {geo_location_code}")
+        parent = self._get_or_cache_location(parent_code, parent_type, location_cache)
+        if not parent:
+            logger.error(f"Parent with code {parent_code} and type {parent_type} not found for {data_type} {geo_location_code}")
             return None
 
         return {
             "code": geo_location_code,
             "name": geo_location_name,
-            "type": "W",
-            "parent": parent_district,
-        }
-
-    def _process_village(self, row: dict, location_cache: dict) -> dict:
-        geo_location_code = row.get("geo_location_code")
-        geo_location_name = row.get("geo_location_name")
-        parent_geo_location_code = row.get("parent_geo_location_code")
-
-        if not geo_location_code or not geo_location_name or not parent_geo_location_code:
-            logger.warning("Skipping Village due to missing geo_location_code, geo_location_name, or parent_geo_location_code")
-            return None
-
-        parent_geo_location_code = parent_geo_location_code[:5]
-
-        parent_ta = self._get_or_cache_location(parent_geo_location_code, "W", location_cache)
-        if not parent_ta:
-            logger.error(f"Parent TA with code {parent_geo_location_code} not found for Village {geo_location_code}")
-            return None
-
-        return {
-            "code": geo_location_code,
-            "name": geo_location_name,
-            "type": "V",
-            "parent": parent_ta,
+            "type": data_type,
+            "parent": parent,
         }
 
     def _get_or_cache_location(self, location_code: str, location_type: str, location_cache: dict) -> Location:
