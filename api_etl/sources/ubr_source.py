@@ -1,5 +1,6 @@
 import logging
 import requests
+import time
 
 from api_etl.apps import ApiEtlConfig
 from api_etl.auth_provider import get_auth_provider
@@ -43,26 +44,37 @@ class UBRIndividualSource(DataSource):
         district_codes = Location.objects.filter(type='D', validity_to__isnull=True).values_list('code', flat=True)
 
         for district_code in district_codes:
-            for wealth_quintile in [
-                UBRWealthQuintiles.POOREST.value,
-                UBRWealthQuintiles.POORER.value,
-                UBRWealthQuintiles.POOR.value,
-            ]:
-                logger.debug(f"Fetching district {district_code}, wealth quintile: {wealth_quintile}")
+            # Fetch TAs for the district
+            ta_codes = Location.objects.filter(
+                parent__code=district_code, type='W', validity_to__isnull=True
+            ).values_list('code', flat=True)
 
-                for start_percentile in self.pmt_percentile_range[:-1]:
-                    end_percentile = start_percentile + 1
-                    logger.debug(f"Fetching percentile: {start_percentile} to {end_percentile}")
+            for ta_code in ta_codes:
+                # Fetch Villages for the TA
+                village_codes = Location.objects.filter(
+                    parent__code=ta_code, type='V', validity_to__isnull=True
+                ).values_list('code', flat=True)
 
+                for village_code in village_codes:
+                    logger.debug(f"Fetching data for district: {district_code}, TA: {ta_code}, Village: {village_code}")
+
+                    params = {
+                        "district_code": district_code,
+                        "traditional_authority_code": ta_code,
+                        "village_code": village_code,
+                        "lower_percentile_category": str(self.pmt_percentile_range.start),
+                        "upper_percentile_category": str(self.pmt_percentile_range.stop - 1),
+                        "wealth_quintile": ",".join([
+                            str(UBRWealthQuintiles.POOREST.value),
+                            str(UBRWealthQuintiles.POORER.value),
+                            str(UBRWealthQuintiles.POOR.value),
+                        ]),
+                    }
                     res = session.post(
                         url,
                         headers=headers,
-                        params={
-                            "district_code": district_code,
-                            "lower_percentile_category": start_percentile,
-                            "upper_percentile_category": end_percentile,
-                            "wealth_quintiles": wealth_quintile,
-                        }
+                        params=params,
+                        timeout=300
                     )
 
                     if not res.ok:
@@ -77,10 +89,14 @@ class UBRIndividualSource(DataSource):
 
                     rows = body.get("targeting_data", [])
                     if rows:
-                        prefix = f"batch_{district_code}_{wealth_quintile}_{start_percentile}_{end_percentile}_"
+                        prefix = f"batch_{district_code}_{ta_code}_{village_code}_"
                         identifier = get_timestamped_batch_identifier(prefix)
                         logger.debug(f"Sending {len(rows)} records to data adaptor to process")
                         yield rows, identifier
+                    
+                    # Add a 5-second sleep after processing each TA
+                    logger.info(f"Sleeping for 5 seconds after processing TA: {ta_code}")
+                    time.sleep(5)
 
 
 class UBRLocationSource(DataSource):
@@ -134,6 +150,10 @@ class UBRLocationSource(DataSource):
             identifier = get_timestamped_batch_identifier(prefix)
             logger.debug(f"Sending {len(village_rows)} Village records to data adaptor to process")
             yield {"data_type": "V", "data": village_rows}, identifier
+            
+            # Add a 30-second sleep after processing each district
+            logger.info(f"Sleeping for 30 seconds after processing district: {district_code}")
+            time.sleep(30)
 
     @staticmethod
     def ensure_regions_exist():
@@ -157,7 +177,7 @@ class UBRLocationSource(DataSource):
         params = {"geo_location_type_id": 1}
         logger.info(f"Fetching districts from {url} with params: {params}")
 
-        res = session.post(url, headers=headers, json=params)
+        res = session.post(url, headers=headers, json=params, timeout=300)
 
         if not res.ok:
             logger.error("HTTP Request failed: %s %s", res.status_code, res.reason)
@@ -185,7 +205,7 @@ class UBRLocationSource(DataSource):
         }
         logger.info(f"Fetching TAs from {url} with params: {params}")
 
-        res = session.post(url, headers=headers, json=params)
+        res = session.post(url, headers=headers, json=params, timeout=300)
 
         if not res.ok:
             logger.error("HTTP Request failed: %s %s", res.status_code, res.reason)
@@ -213,7 +233,7 @@ class UBRLocationSource(DataSource):
         }
         logger.info(f"Fetching Villages from {url} with params: {params}")
 
-        res = session.post(url, headers=headers, json=params)
+        res = session.post(url, headers=headers, json=params, timeout=300)
 
         if not res.ok:
             logger.error("HTTP Request failed: %s %s", res.status_code, res.reason)
