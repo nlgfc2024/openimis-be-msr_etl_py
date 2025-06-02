@@ -122,8 +122,10 @@ class UBRLocationSource(DataSource):
 
         self.ensure_regions_exist()
 
-        district_rows = self.fetch_districts_from_api(session, url, headers)
-        
+        district_rows = self.fetch_geo_locations_from_api(
+            session, url, headers, {"geo_location_type_id": 1}, "districts"
+        )
+
         prefix = f"batch_districts_"
         identifier = get_timestamped_batch_identifier(prefix)
         logger.debug(f"Sending {len(district_rows)} district records to data adaptor to process")
@@ -136,7 +138,9 @@ class UBRLocationSource(DataSource):
                 continue
 
             logger.info(f"Fetching TAs for district: {district_code}")
-            ta_rows = self.fetch_tas_from_api(session, url, headers, district_code)
+            ta_rows = self.fetch_geo_locations_from_api(
+                session, url, headers, {"geo_location_type_id": 2, "district_code": district_code}, "TAs"
+            )
 
             prefix = f"batch_tas_{district_code}_"
             identifier = get_timestamped_batch_identifier(prefix)
@@ -144,13 +148,15 @@ class UBRLocationSource(DataSource):
             yield {"data_type": "W", "data": ta_rows}, identifier
 
             logger.info(f"Fetching Villages for district: {district_code}")
-            village_rows = self.fetch_villages_from_api(session, url, headers, district_code)
+            village_rows = self.fetch_geo_locations_from_api(
+                session, url, headers, {"geo_location_type_id": 11, "district_code": district_code}, "Villages"
+            )
 
             prefix = f"batch_villages_{district_code}_"
             identifier = get_timestamped_batch_identifier(prefix)
             logger.debug(f"Sending {len(village_rows)} Village records to data adaptor to process")
             yield {"data_type": "V", "data": village_rows}, identifier
-            
+
             # Add a 30-second sleep after processing each district
             logger.info(f"Sleeping for 30 seconds after processing district: {district_code}")
             time.sleep(30)
@@ -173,9 +179,8 @@ class UBRLocationSource(DataSource):
                 logger.debug(f"Region already exists: {region_name} (Code: {region_code})")
 
     @staticmethod
-    def fetch_districts_from_api(session, url, headers):
-        params = {"geo_location_type_id": 1}
-        logger.info(f"Fetching districts from {url} with params: {params}")
+    def fetch_geo_locations_from_api(session, url, headers, params, log_label):
+        logger.info(f"Fetching {log_label} from {url} with params: {params}")
 
         res = session.post(url, headers=headers, json=params, timeout=300)
 
@@ -189,66 +194,10 @@ class UBRLocationSource(DataSource):
             logger.error(f"Error in response: {body.get('error_message')}")
             raise Exception(f"Error in response: {body.get('error_message')}")
 
-        districts = body.get("geo_locations", [])
-        if not districts:
-            logger.warning("No districts found in the API response.")
+        locations = body.get("geo_locations", [])
+        if not locations:
+            logger.warning(f"No {log_label} found in the API response.")
             return []
 
-        logger.info(f"Fetched {len(districts)} districts from the API.")
-        return districts
-
-    @staticmethod
-    def fetch_tas_from_api(session, url, headers, district_code):
-        params = {
-            "geo_location_type_id": 2,
-            "district_code": district_code,
-        }
-        logger.info(f"Fetching TAs from {url} with params: {params}")
-
-        res = session.post(url, headers=headers, json=params, timeout=300)
-
-        if not res.ok:
-            logger.error("HTTP Request failed: %s %s", res.status_code, res.reason)
-            raise Exception(f"HTTP request failed: {res.status_code}: {res.reason}")
-
-        body = res.json()
-
-        if body.get("error_occurred", False):
-            logger.error(f"Error in response: {body.get('error_message')}")
-            raise Exception(f"Error in response: {body.get('error_message')}")
-
-        tas = body.get("geo_locations", [])
-        if not tas:
-            logger.warning(f"No TAs found for district {district_code} in the API response.")
-            return []
-
-        logger.info(f"Fetched {len(tas)} TAs for district {district_code} from the API.")
-        return tas
-
-    @staticmethod
-    def fetch_villages_from_api(session, url, headers, district_code):
-        params = {
-            "geo_location_type_id": 11,
-            "district_code": district_code,
-        }
-        logger.info(f"Fetching Villages from {url} with params: {params}")
-
-        res = session.post(url, headers=headers, json=params, timeout=300)
-
-        if not res.ok:
-            logger.error("HTTP Request failed: %s %s", res.status_code, res.reason)
-            raise Exception(f"HTTP request failed: {res.status_code}: {res.reason}")
-
-        body = res.json()
-
-        if body.get("error_occurred", False):
-            logger.error(f"Error in response: {body.get('error_message')}")
-            raise Exception(f"Error in response: {body.get('error_message')}")
-
-        villages = body.get("geo_locations", [])
-        if not villages:
-            logger.warning(f"No Villages found for district {district_code} in the API response.")
-            return []
-
-        logger.info(f"Fetched {len(villages)} Villages for district {district_code} from the API.")
-        return villages
+        logger.info(f"Fetched {len(locations)} {log_label} from the API.")
+        return locations

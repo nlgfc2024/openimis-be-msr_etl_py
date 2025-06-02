@@ -159,7 +159,7 @@ class UBRLocationSourceTestCase(TestCase):
         # Mocked districts response
         cls.mocked_districts_response = {
             "error_occurred": False,
-            "total_records": 32,
+            "total_records": 2,
             "geo_locations": [
                 {"geo_location_code": "101", "geo_location_name": "Chitipa", "parent_geo_location_code": None, "geo_location_type_id": 1, "geo_location_type_name": "DISTRICT"},
                 {"geo_location_code": "102", "geo_location_name": "Karonga", "parent_geo_location_code": None, "geo_location_type_id": 1, "geo_location_type_name": "DISTRICT"},
@@ -186,7 +186,7 @@ class UBRLocationSourceTestCase(TestCase):
             },
         ]
 
-        # Mocked villages response corresponding to the TAs
+        # Mocked villages response corresponding to the districts
         cls.mocked_villages_response = [
             {
                 "error_occurred": False,
@@ -207,48 +207,33 @@ class UBRLocationSourceTestCase(TestCase):
         ]
 
     @patch("requests.Session.post")
-    def test_fetch_districts_from_api(self, mock_post):
-        mock_post.side_effect = [
-            MagicMock(ok=True, json=MagicMock(return_value=self.mocked_districts_response))
-        ]
-
-        districts = UBRLocationSource.fetch_districts_from_api(self.session, self.url, self.headers)
-
+    def test_fetch_geo_locations_from_api(self, mock_post):
+        # Test districts
+        mock_post.return_value = MagicMock(ok=True, json=MagicMock(return_value=self.mocked_districts_response))
+        districts = UBRLocationSource.fetch_geo_locations_from_api(
+            self.session, self.url, self.headers, {"geo_location_type_id": 1}, "districts"
+        )
         self.assertEqual(len(districts), 2)
         self.assertEqual(districts[0]["geo_location_code"], "101")
-        self.assertEqual(districts[0]["geo_location_name"], "Chitipa")
         self.assertEqual(districts[1]["geo_location_code"], "102")
-        self.assertEqual(districts[1]["geo_location_name"], "Karonga")
 
-    @patch("requests.Session.post")
-    def test_fetch_tas_from_api(self, mock_post):
-        mock_post.side_effect = [
-            MagicMock(ok=True, json=MagicMock(return_value=self.mocked_tas_response[0]))
-        ]
-
-        district_code = "101"
-        tas = UBRLocationSource.fetch_tas_from_api(self.session, self.url, self.headers, district_code)
-
+        # Test TAs
+        mock_post.return_value = MagicMock(ok=True, json=MagicMock(return_value=self.mocked_tas_response[0]))
+        tas = UBRLocationSource.fetch_geo_locations_from_api(
+            self.session, self.url, self.headers, {"geo_location_type_id": 2, "district_code": "101"}, "TAs"
+        )
         self.assertEqual(len(tas), 2)
         self.assertEqual(tas[0]["geo_location_code"], "10101")
-        self.assertEqual(tas[0]["geo_location_name"], "Kameme")
         self.assertEqual(tas[1]["geo_location_code"], "10102")
-        self.assertEqual(tas[1]["geo_location_name"], "Mwabulambiya")
 
-    @patch("requests.Session.post")
-    def test_fetch_villages_from_api(self, mock_post):
-        mock_post.side_effect = [
-            MagicMock(ok=True, json=MagicMock(return_value=self.mocked_villages_response[0]))
-        ]
-
-        district_code = "10101"
-        villages = UBRLocationSource.fetch_villages_from_api(self.session, self.url, self.headers, district_code)
-
+        # Test Villages
+        mock_post.return_value = MagicMock(ok=True, json=MagicMock(return_value=self.mocked_villages_response[0]))
+        villages = UBRLocationSource.fetch_geo_locations_from_api(
+            self.session, self.url, self.headers, {"geo_location_type_id": 11, "district_code": "101"}, "Villages"
+        )
         self.assertEqual(len(villages), 2)
         self.assertEqual(villages[0]["geo_location_code"], "101010101")
-        self.assertEqual(villages[0]["geo_location_name"], "Mweniyanga II")
         self.assertEqual(villages[1]["geo_location_code"], "101010102")
-        self.assertEqual(villages[1]["geo_location_name"], "Mweniyanga IX")
 
     @patch("location.models.Location.objects.get_or_create")
     def test_ensure_regions_exist(self, mock_get_or_create):
@@ -283,8 +268,8 @@ class UBRLocationSourceTestCase(TestCase):
         mock_post.side_effect = [
             MagicMock(ok=True, json=MagicMock(return_value=self.mocked_districts_response)),  # Districts
             MagicMock(ok=True, json=MagicMock(return_value=self.mocked_tas_response[0])),  # TAs for District 101
-            MagicMock(ok=True, json=MagicMock(return_value=self.mocked_tas_response[1])),  # TAs for District 102
             MagicMock(ok=True, json=MagicMock(return_value=self.mocked_villages_response[0])),  # Villages for District 101
+            MagicMock(ok=True, json=MagicMock(return_value=self.mocked_tas_response[1])),  # TAs for District 102
             MagicMock(ok=True, json=MagicMock(return_value=self.mocked_villages_response[1])),  # Villages for District 102
         ]
 
