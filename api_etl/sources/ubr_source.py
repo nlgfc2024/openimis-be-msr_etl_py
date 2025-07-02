@@ -50,53 +50,47 @@ class UBRIndividualSource(DataSource):
             ).values_list('code', flat=True)
 
             for ta_code in ta_codes:
-                # Fetch Villages for the TA
-                village_codes = Location.objects.filter(
-                    parent__code=ta_code, type='V', validity_to__isnull=True
-                ).values_list('code', flat=True)
+                logger.debug(f"Fetching data for district: {district_code}, TA: {ta_code}")
 
-                for village_code in village_codes:
-                    logger.debug(f"Fetching data for district: {district_code}, TA: {ta_code}, Village: {village_code}")
+                params = {
+                    "district_code": district_code,
+                    "traditional_authority_code": ta_code,
+                    # "village_code": village_code,
+                    "lower_percentile_category": str(self.pmt_percentile_range.start),
+                    "upper_percentile_category": str(self.pmt_percentile_range.stop - 1),
+                    "wealth_quintile": ",".join([
+                        str(UBRWealthQuintiles.POOREST.value),
+                        str(UBRWealthQuintiles.POORER.value),
+                        str(UBRWealthQuintiles.POOR.value),
+                    ]),
+                }
+                res = session.post(
+                    url,
+                    headers=headers,
+                    params=params,
+                    timeout=300
+                )
 
-                    params = {
-                        "district_code": district_code,
-                        "traditional_authority_code": ta_code,
-                        "village_code": village_code,
-                        "lower_percentile_category": str(self.pmt_percentile_range.start),
-                        "upper_percentile_category": str(self.pmt_percentile_range.stop - 1),
-                        "wealth_quintile": ",".join([
-                            str(UBRWealthQuintiles.POOREST.value),
-                            str(UBRWealthQuintiles.POORER.value),
-                            str(UBRWealthQuintiles.POOR.value),
-                        ]),
-                    }
-                    res = session.post(
-                        url,
-                        headers=headers,
-                        params=params,
-                        timeout=300
-                    )
+                if not res.ok:
+                    logger.error("HTTP Request failed: %s %s", res.status_code, res.reason)
+                    raise self.Error(f"HTTP request failed: {res.status_code}: {res.reason}")
 
-                    if not res.ok:
-                        logger.error("HTTP Request failed: %s %s", res.status_code, res.reason)
-                        raise self.Error(f"HTTP request failed: {res.status_code}: {res.reason}")
+                body = res.json()
 
-                    body = res.json()
+                if body.get("error_occurred", False):
+                    logger.error(f"Error in response: {body.get('error_message')}")
+                    raise self.Error(f"Error in response: {body.get('error_message')}")
 
-                    if body.get("error_occurred", False):
-                        logger.error(f"Error in response: {body.get('error_message')}")
-                        raise self.Error(f"Error in response: {body.get('error_message')}")
-
-                    rows = body.get("targeting_data", [])
-                    if rows:
-                        prefix = f"batch_{district_code}_{ta_code}_{village_code}_"
-                        identifier = get_timestamped_batch_identifier(prefix)
-                        logger.debug(f"Sending {len(rows)} records to data adaptor to process")
-                        yield rows, identifier
-                    
-                    # Add a 5-second sleep after processing each TA
-                    logger.info(f"Sleeping for 5 seconds after processing TA: {ta_code}")
-                    time.sleep(5)
+                rows = body.get("targeting_data", [])
+                if rows:
+                    prefix = f"batch_{district_code}_{ta_code}_"
+                    identifier = get_timestamped_batch_identifier(prefix)
+                    logger.info(f"Sending {len(rows)} records to data adaptor to process")
+                    yield rows, identifier
+                
+                # Add a 5-second sleep after processing each TA
+                logger.info(f"Sleeping for 5 seconds after processing TA: {ta_code}")
+                time.sleep(5)
 
 
 class UBRLocationSource(DataSource):
