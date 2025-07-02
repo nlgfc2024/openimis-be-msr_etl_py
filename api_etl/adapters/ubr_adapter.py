@@ -50,14 +50,19 @@ class UBRIndividualAdapter(DataAdapter):
 
             members = row.get("household_members", [])
             for member in members:
-                if not member.get("first_name") or not member.get("last_name"):
-                    logger.debug(f"Skipping individual due to missing first_name or last_name")
+                # Check for missing or empty first_name, last_name, or date_of_birth
+                if not member.get("first_name") or not member.get("last_name") or not member.get("date_of_birth"):
+                    logger.debug(f"Skipping individual due to missing first_name, last_name, or date_of_birth")
                     continue
-                
-                if member.get("first_name").strip() == "" or member.get("last_name").strip() == "":
-                    logger.debug(f"Skipping individual due to empty first_name or last_name")
+
+                if (
+                    member.get("first_name").strip() in ("", "null", "none") or
+                    member.get("last_name").strip() in ("", "null", "none") or
+                    str(member.get("date_of_birth")).strip() in ("", "null", "none")
+                ):
+                    logger.debug(f"Skipping individual due to empty first_name, last_name, or date_of_birth")
                     continue
-                
+
                 if (
                     member.get("first_name").strip().lower() == "abc" or 
                     "abcdefghijklmnopqrstuvwxyz".startswith(member.get("first_name").strip().lower())
