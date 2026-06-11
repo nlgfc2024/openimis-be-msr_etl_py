@@ -31,6 +31,7 @@ MOCKED_RESPONSE_DATA = [
     },
 ]
 
+
 class ETLServiceTestCase(TestCase):
     def setUp(self):
         self.user = LogInHelper().get_or_create_user_api()

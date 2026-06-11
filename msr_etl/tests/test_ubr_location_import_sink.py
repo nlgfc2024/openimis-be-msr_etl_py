@@ -1,5 +1,5 @@
 from django.test import TestCase
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from msr_etl.sinks.location_import_sink import LocationImportSink
 from location.models import Location
 from core.test_helpers import LogInHelper

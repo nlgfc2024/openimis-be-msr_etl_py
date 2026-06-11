@@ -234,5 +234,3 @@ class UBRLocationAdapterTestCase(TestCase):
             self.adapter.transform(None)
 
         self.assertEqual(str(cm.exception), "Invalid input, expect input not to be None")
-
-
