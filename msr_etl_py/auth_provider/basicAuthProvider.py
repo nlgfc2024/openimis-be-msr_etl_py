@@ -1,6 +1,6 @@
 import base64
 
-from api_etl.apps import ApiEtlConfig
+from api_etl.apps import MsrEtlConfig
 from api_etl.auth_provider.base import AuthProvider, AuthError
 
 
@@ -14,7 +14,7 @@ class BasicAuthProvider(AuthProvider):
 
     @staticmethod
     def _get_token_value():
-        if not ApiEtlConfig.auth_basic_username or not ApiEtlConfig.auth_basic_password:
+        if not MsrEtlConfig.auth_basic_username or not MsrEtlConfig.auth_basic_password:
             raise AuthError("Basic auth credentials not provided")
-        basic_payload = f"{ApiEtlConfig.auth_basic_username}:{ApiEtlConfig.auth_basic_password}"
+        basic_payload = f"{MsrEtlConfig.auth_basic_username}:{MsrEtlConfig.auth_basic_password}"
         return base64.b64encode(basic_payload.encode("utf-8")).decode("utf-8")

@@ -2,7 +2,7 @@ import logging
 import requests
 import time
 
-from api_etl.apps import ApiEtlConfig
+from api_etl.apps import MsrEtlConfig
 from api_etl.auth_provider import get_auth_provider
 from api_etl.auth_provider.base import AuthProvider
 from api_etl.sources import DataSource
@@ -30,7 +30,7 @@ class UBRIndividualSource(DataSource):
 
     def pull(self):
         headers = {
-            **ApiEtlConfig.source_headers,
+            **MsrEtlConfig.source_headers,
             **self.auth_provider.get_auth_header(),
         }
 
@@ -105,7 +105,7 @@ class UBRLocationSource(DataSource):
 
     def pull(self):
         headers = {
-            **ApiEtlConfig.source_headers,
+            **MsrEtlConfig.source_headers,
             **self.auth_provider.get_auth_header(),
         }
 

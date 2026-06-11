@@ -4,7 +4,7 @@ from unittest.mock import patch, MagicMock
 from django.db import connection
 from django.test import TestCase
 
-from api_etl.apps import ApiEtlConfig
+from api_etl.apps import MsrEtlConfig
 from api_etl.auth_provider import get_auth_provider
 from api_etl.services.exampleIndividualETLService import ExampleIndividualETLService
 from api_etl.sources import ExampleIndividualSource
@@ -34,8 +34,8 @@ MOCKED_RESPONSE_DATA = [
 class ETLServiceTestCase(TestCase):
     def setUp(self):
         self.user = LogInHelper().get_or_create_user_api()
-        ApiEtlConfig.sink_model_lookup_field = 'json_ext__external_id'
-        ApiEtlConfig.sink_update_existing = True
+        MsrEtlConfig.sink_model_lookup_field = 'json_ext__external_id'
+        MsrEtlConfig.sink_update_existing = True
 
         # Create existing individual in the database
         self.individual = Individual(
@@ -47,7 +47,7 @@ class ETLServiceTestCase(TestCase):
         self.individual.save(username=self.user.username)
 
     @patch("requests.Session.request")
-    @patch("api_etl.apps.ApiEtlConfig.source_batch_size", new=2)
+    @patch("api_etl.apps.MsrEtlConfig.source_batch_size", new=2)
     @patch('individual.services.IndividualConfig.enable_maker_checker_for_individual_upload', False)
     @patch('individual.services.IndividualConfig.enable_maker_checker_for_individual_update', False)
     @patch('individual.services.IndividualConfig.individual_schema', json.dumps({

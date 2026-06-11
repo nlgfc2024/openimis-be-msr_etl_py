@@ -8,7 +8,7 @@ from api_etl.utils import (
     get_class_by_name,
     ETL_CLASS
 )
-from api_etl.apps import ApiEtlConfig
+from api_etl.apps import MsrEtlConfig
 from core.gql.gql_mutations.base_mutation import BaseMutation
 from core.schema import OpenIMISMutation
 
@@ -27,7 +27,7 @@ class ETLServiceMutation(BaseMutation):
     @classmethod
     def _validate_mutation(cls, user, **data):
         if type(user) is AnonymousUser or not user.id or not user.has_perms(
-                ApiEtlConfig.gql_query_api_etl_rule_perms):
+                MsrEtlConfig.gql_query_api_etl_rule_perms):
             raise ValidationError("mutation.authentication_required")
 
     @classmethod

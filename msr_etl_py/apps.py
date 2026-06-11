@@ -1,6 +1,6 @@
 from django.apps import AppConfig
 
-MODULE_NAME = "api_etl"
+MODULE_NAME = "msr_etl"
 
 DEFAULT_CONFIG = {
     "auth_type": "basic",  # noauth, basic, bearer
@@ -27,7 +27,7 @@ DEFAULT_CONFIG = {
 }
 
 
-class ApiEtlConfig(AppConfig):
+class MsrEtlConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'
     name = MODULE_NAME
 
@@ -59,8 +59,8 @@ class ApiEtlConfig(AppConfig):
         Load all config fields that match current AppConfig class fields, all custom fields have to be loaded separately
         """
         for field in cfg:
-            if hasattr(ApiEtlConfig, field):
-                setattr(ApiEtlConfig, field, cfg[field])
+            if hasattr(MsrEtlConfig, field):
+                setattr(MsrEtlConfig, field, cfg[field])
 
     def ready(self):
         from core.models import ModuleConfiguration

@@ -1,1 +1,1 @@
-default_app_config = 'api_etl.apps.ApiEtlConfig'
+default_app_config = 'msr_etl.apps.MsrEtlConfig'

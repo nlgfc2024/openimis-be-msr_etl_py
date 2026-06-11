@@ -1,4 +1,4 @@
-from api_etl.apps import ApiEtlConfig
+from api_etl.apps import MsrEtlConfig
 from api_etl.auth_provider.base import AuthProvider, AuthError
 
 
@@ -12,6 +12,6 @@ class BearerAuthProvider(AuthProvider):
 
     @staticmethod
     def _get_token_value():
-        if not ApiEtlConfig.auth_bearer_token:
+        if not MsrEtlConfig.auth_bearer_token:
             raise AuthError("Bearer token not provided")
-        return ApiEtlConfig.auth_bearer_token
+        return MsrEtlConfig.auth_bearer_token
