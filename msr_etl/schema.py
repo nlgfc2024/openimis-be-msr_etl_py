@@ -21,7 +21,7 @@ class Query(graphene.ObjectType):
     )
 
     def resolve_etl_services_by_service_name(parent, info, **kwargs):
-        if not info.context.user.has_perms(MsrEtlConfig.gql_query_msr_etl_rule_perms):
+        if not info.context.user.has_perms(MsrEtlConfig.gql_query_api_etl_rule_perms):
             raise PermissionError("Unauthorized")
 
         list_sr = []

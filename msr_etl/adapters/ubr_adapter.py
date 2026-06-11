@@ -13,12 +13,12 @@ class UBRIndividualAdapter(DataAdapter):
         result = []
 
         if data is None:
-            raise self.Error("Invalid input, expect input not to be None")
+            raise self.Error(f"Invalid input, expect input not to be None")
 
         for row in data:
             group_code = row.get("form_number").strip()
-            if not group_code:  # TODO: track skipped households
-                logger.debug("Skipping individual due to missing form_number")
+            if not group_code: #TODO: track skipped households
+                logger.debug(f"Skipping individual due to missing form_number")
                 continue
 
             # TODO: add this to household json_ext
@@ -52,24 +52,24 @@ class UBRIndividualAdapter(DataAdapter):
             for member in members:
                 # Check for missing or empty first_name, last_name, or date_of_birth
                 if not member.get("first_name") or not member.get("last_name") or not member.get("date_of_birth"):
-                    logger.debug("Skipping individual due to missing first_name, last_name, or date_of_birth")
+                    logger.debug(f"Skipping individual due to missing first_name, last_name, or date_of_birth")
                     continue
 
                 if (
-                    member.get("first_name").strip() in ("", "null", "none")
-                    or member.get("last_name").strip() in ("", "null", "none")
-                    or str(member.get("date_of_birth")).strip() in ("", "null", "none")
+                    member.get("first_name").strip() in ("", "null", "none") or
+                    member.get("last_name").strip() in ("", "null", "none") or
+                    str(member.get("date_of_birth")).strip() in ("", "null", "none")
                 ):
-                    logger.debug("Skipping individual due to empty first_name, last_name, or date_of_birth")
+                    logger.debug(f"Skipping individual due to empty first_name, last_name, or date_of_birth")
                     continue
 
                 if (
-                    member.get("first_name").strip().lower() == "abc"
-                    or "abcdefghijklmnopqrstuvwxyz".startswith(member.get("first_name").strip().lower())
+                    member.get("first_name").strip().lower() == "abc" or 
+                    "abcdefghijklmnopqrstuvwxyz".startswith(member.get("first_name").strip().lower())
                 ):
-                    logger.debug("Skipping individual due to first_name being abc or starting with an alphabet")
+                    logger.debug(f"Skipping individual due to first_name being abc or starting with an alphabet")
                     continue
-
+                
                 result_row = {
                     "group_code": group_code,
                     "form_number": group_code,

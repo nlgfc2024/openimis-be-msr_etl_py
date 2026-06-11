@@ -13,6 +13,7 @@ from core.gql.gql_mutations.base_mutation import BaseMutation
 from core.schema import OpenIMISMutation
 
 
+
 class ETLServiceMutation(BaseMutation):
     """
     Mutation to execute the ETLService
@@ -26,7 +27,7 @@ class ETLServiceMutation(BaseMutation):
     @classmethod
     def _validate_mutation(cls, user, **data):
         if type(user) is AnonymousUser or not user.id or not user.has_perms(
-                MsrEtlConfig.gql_query_msr_etl_rule_perms):
+                MsrEtlConfig.gql_query_api_etl_rule_perms):
             raise ValidationError("mutation.authentication_required")
 
     @classmethod
@@ -37,7 +38,7 @@ class ETLServiceMutation(BaseMutation):
             name_of_service = data.pop('name_of_service', None)
             if not name_of_service:
                 return [{
-                    'message': "msr_etl.mutation.failed_to_execute_etl_service",
+                    'message': "api_etl.mutation.failed_to_execute_etl_service",
                     'detail': _('There is no ETL service with provided name')
                 }]
 
@@ -56,6 +57,6 @@ class ETLServiceMutation(BaseMutation):
                 }]
         except Exception as exc:
             return [{
-                'message': "msr_etl.mutation.failed_to_execute_etl_service",
+                'message': "api_etl.mutation.failed_to_execute_etl_service",
                 'detail': str(exc)
             }]

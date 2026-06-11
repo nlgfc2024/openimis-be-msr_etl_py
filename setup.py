@@ -25,6 +25,7 @@ setup(
         'djangorestframework',
         'openimis-be-core',
         'openimis-be-individual',
+        'openimis-be-location',
         'requests',
     ],
     classifiers=[
