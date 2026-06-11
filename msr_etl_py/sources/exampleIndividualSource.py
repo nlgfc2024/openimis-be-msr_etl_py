@@ -2,7 +2,7 @@ import logging
 
 import requests
 
-from api_etl.apps import ApiEtlConfig
+from api_etl.apps import MsrEtlConfig
 from api_etl.auth_provider import get_auth_provider
 from api_etl.auth_provider.base import AuthProvider
 from api_etl.sources import DataSource
@@ -24,12 +24,12 @@ class ExampleIndividualSource(DataSource):
         This Source yields the list of records in batch
         """
         headers = {
-            **ApiEtlConfig.source_headers,
+            **MsrEtlConfig.source_headers,
             **self.auth_provider.get_auth_header(),
         }
 
-        method = ApiEtlConfig.source_http_method
-        url = ApiEtlConfig.source_url
+        method = MsrEtlConfig.source_http_method
+        url = MsrEtlConfig.source_url
 
         logger.info("Pulling individuals from %s %s", method, url)
 
@@ -37,10 +37,10 @@ class ExampleIndividualSource(DataSource):
         current_index = 0
         session = requests.Session()
         while in_progress:
-            logger.debug("Fetching index: %s, batch size: %s", current_index, ApiEtlConfig.source_batch_size)
+            logger.debug("Fetching index: %s, batch size: %s", current_index, MsrEtlConfig.source_batch_size)
             res = session.request(
                 method, url, headers=headers,
-                params={"current": current_index, "rowCount": ApiEtlConfig.source_batch_size}
+                params={"current": current_index, "rowCount": MsrEtlConfig.source_batch_size}
             )
 
             if not res.ok:
@@ -59,7 +59,7 @@ class ExampleIndividualSource(DataSource):
                 yield rows, identifier
 
             # Determine if we've reached the last page
-            if len(rows) < ApiEtlConfig.source_batch_size:
+            if len(rows) < MsrEtlConfig.source_batch_size:
                 in_progress = False
             else:
-                current_index += ApiEtlConfig.source_batch_size
+                current_index += MsrEtlConfig.source_batch_size

@@ -6,7 +6,7 @@ from core.models import User
 from individual.models import Individual
 from individual.services import IndividualImportService
 from workflow.services import WorkflowService
-from api_etl.apps import ApiEtlConfig
+from api_etl.apps import MsrEtlConfig
 
 logger = logging.getLogger(__name__)
 
@@ -32,10 +32,10 @@ class IndividualImportSink(DataSink):
             logger.debug(f"No new record to import")
 
         if existing_records:
-            if ApiEtlConfig.sink_update_existing:
+            if MsrEtlConfig.sink_update_existing:
                 self._update_existing_records(existing_records, batch_identifier)
             else:
-                logger.debug(f"Skipped updating {len(existing_records)} existing records due to ApiEtlConfig.sink_update_existing = False")
+                logger.debug(f"Skipped updating {len(existing_records)} existing records due to MsrEtlConfig.sink_update_existing = False")
         else:
             logger.debug(f"No existing record to update")
 
@@ -54,7 +54,7 @@ class IndividualImportSink(DataSink):
         logger.debug(f"Updated {len(existing_records)} existing records with {result_existing}")
 
     def _split_existing_and_new(self, data: list[dict]) -> tuple[list[dict], list[dict]]:
-        model_lookup_field = ApiEtlConfig.sink_model_lookup_field
+        model_lookup_field = MsrEtlConfig.sink_model_lookup_field
 
         data_ids = [self._get_data_id(record, model_lookup_field) for record in data]
         existing_data_id_to_db_id_map = self._get_existing_individual_ids(data_ids, model_lookup_field)

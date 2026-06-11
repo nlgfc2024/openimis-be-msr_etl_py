@@ -4,14 +4,14 @@ from api_etl.sinks.individual_import_sink import IndividualImportSink, IMPORT_NE
 from core.test_helpers import LogInHelper
 from individual.models import Individual
 from django.core.files.uploadedfile import InMemoryUploadedFile
-from api_etl.apps import ApiEtlConfig
+from api_etl.apps import MsrEtlConfig
 
 class TestIndividualImportSink(TestCase):
 
     def setUp(self):
         self.user = LogInHelper().get_or_create_user_api()
-        ApiEtlConfig.sink_model_lookup_field = 'json_ext__external_id'
-        ApiEtlConfig.sink_update_existing = True
+        MsrEtlConfig.sink_model_lookup_field = 'json_ext__external_id'
+        MsrEtlConfig.sink_update_existing = True
 
         # Create existing individual in the database
         self.individual = Individual(
@@ -107,7 +107,7 @@ class TestIndividualImportSink(TestCase):
     @patch('api_etl.sinks.individual_import_sink.WorkflowService.get_workflows')
     def test_push_data_skip_existing_when_update_disabled(self, mock_get_workflows, mock_import_individuals):
         mock_get_workflows.side_effect = mock_get_workflow
-        ApiEtlConfig.sink_update_existing = False  # Disable updating existing records
+        MsrEtlConfig.sink_update_existing = False  # Disable updating existing records
 
         sink = IndividualImportSink(self.user)
         data = [

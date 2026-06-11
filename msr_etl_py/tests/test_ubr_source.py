@@ -3,7 +3,7 @@ from unittest.mock import patch, MagicMock
 
 from django.test import TestCase
 
-from api_etl.apps import ApiEtlConfig
+from api_etl.apps import MsrEtlConfig
 from api_etl.auth_provider import get_auth_provider
 from api_etl.sources import UBRIndividualSource, UBRLocationSource
 from core.test_helpers import create_test_interactive_user

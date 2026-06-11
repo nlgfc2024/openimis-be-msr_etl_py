@@ -1,6 +1,6 @@
 from typing import Literal, Optional
 
-from api_etl.apps import ApiEtlConfig
+from api_etl.apps import MsrEtlConfig
 from api_etl.auth_provider.base import AuthError, AuthProvider
 from api_etl.auth_provider.basicAuthProvider import BasicAuthProvider
 from api_etl.auth_provider.bearerAuthProvider import BearerAuthProvider
@@ -14,7 +14,7 @@ _auth_config_mapping = {
 
 
 def get_auth_provider(auth_type: Optional[Literal["noauth", "basic", "bearer"]] = None):
-    auth_type = auth_type or ApiEtlConfig.auth_type
+    auth_type = auth_type or MsrEtlConfig.auth_type
     if auth_type not in _auth_config_mapping:
         AuthError(f"Unknown auth type: {auth_type}")
     return _auth_config_mapping[auth_type]()
