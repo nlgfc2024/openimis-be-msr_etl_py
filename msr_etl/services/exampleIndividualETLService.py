@@ -3,7 +3,6 @@ from msr_etl.services.base import ETLService
 from msr_etl.sinks import DataSink, IndividualImportSink
 from msr_etl.sources import DataSource, ExampleIndividualSource
 from core.models import User
-from individual.services import IndividualService
 
 
 class ExampleIndividualETLService(ETLService):

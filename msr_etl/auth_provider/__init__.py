@@ -6,6 +6,12 @@ from msr_etl.auth_provider.basicAuthProvider import BasicAuthProvider
 from msr_etl.auth_provider.bearerAuthProvider import BearerAuthProvider
 from msr_etl.auth_provider.noAuthAuthProvider import NoAuthProvider
 
+__all__ = [
+    "AuthError",
+    "AuthProvider",
+    "get_auth_provider",
+]
+
 _auth_config_mapping = {
     "noauth": NoAuthProvider,
     "basic": BasicAuthProvider,

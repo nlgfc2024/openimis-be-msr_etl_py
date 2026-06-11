@@ -31,16 +31,14 @@ class Command(BaseCommand):
         )}
         self.import_villages(df, catchment_lookup)
 
-
     def import_regions(self):
         region_lookup = dict()
         for index, name in enumerate(['Northern', 'Central', 'Southern']):
-            code = str(index+1)
+            code = str(index + 1)
             region, _ = Location.objects.get_or_create(code=code, name=name, type='R')
             region_lookup[code] = region
         self.stdout.write(f"Successfully imported {len(region_lookup)} regions.")
         return region_lookup
-
 
     def import_districts(self, df, region_lookup):
         df["district_code"] = df["traditional_authority_code"].astype(str).str[:3]
@@ -61,7 +59,6 @@ class Command(BaseCommand):
 
         self.stdout.write(f"Successfully imported {len(districts)} districts.")
 
-
     def import_catchments(self, df, district_lookup):
         df.loc[df["catchment_code"].isna(), "catchment_code"] = df["district_code"] + "xxx"
         df.loc[df["catchment_name"].isna(), "catchment_name"] = df["district_name"] + " - No Catchment"
@@ -81,7 +78,6 @@ class Command(BaseCommand):
             Location.objects.bulk_create(catchments, ignore_conflicts=True)
 
         self.stdout.write(f"Successfully imported {len(catchments)} catchments.")
-
 
     def import_villages(self, df, catchment_lookup):
         distinct_villages = df[["catchment_code", "village_code", "village_name"]].drop_duplicates()

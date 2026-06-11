@@ -200,7 +200,7 @@ jobs:
           git clone  --depth=1 --branch=$DBBRANCH https://github.com/openimis/database_postgresql.git ./sql_psql
           sudo bash ./sql_psql/install_postgres_json_schema_extension.sh
           echo 'set search_path to public' >> ~/.psqlrc
-          PGPASSWORD=YourStrong!Passw0rd psql -U $DB_USER -h $DB_HOST -d $DB_NAME_TEST -f  ./sql_psql/database\ scripts/json_schema_extension.sql | grep . | uniq -c
+          PGPASSWORD=YourStrong!Passw0rd psql -U $DB_USER -h $DB_HOST -d $DB_NAME_TEST -f "./sql_psql/database scripts/json_schema_extension.sql" | grep . | uniq -c
         env:
           DB_HOST: localhost
           DB_PORT: 5432
@@ -292,7 +292,7 @@ jobs:
           git clone  --depth=1 --branch=$DBBRANCH https://github.com/openimis/database_postgresql.git ./sql_psql
           sudo bash ./sql_psql/install_postgres_json_schema_extension.sh
           echo 'set search_path to public' >> ~/.psqlrc
-          PGPASSWORD=YourStrong!Passw0rd psql -U $DB_USER -h $DB_HOST -d $DB_NAME_TEST -f  ./sql_psql/database\ scripts/json_schema_extension.sql | grep . | uniq -c
+          PGPASSWORD=YourStrong!Passw0rd psql -U $DB_USER -h $DB_HOST -d $DB_NAME_TEST -f "./sql_psql/database scripts/json_schema_extension.sql" | grep . | uniq -c
         env:
           DB_HOST: localhost
           DB_PORT: 5432
@@ -472,4 +472,3 @@ jobs:
   #       env:
   #         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # Needed to get PR information, if any
   #         SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-

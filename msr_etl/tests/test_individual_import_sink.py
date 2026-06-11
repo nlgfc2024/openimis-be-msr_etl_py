@@ -1,10 +1,11 @@
 from django.test import TestCase
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from msr_etl.sinks.individual_import_sink import IndividualImportSink, IMPORT_NEW_INDIVIDUALS, UPDATE_EXISTING_INDIVIDUALS, WORKFLOW_GROUP
 from core.test_helpers import LogInHelper
 from individual.models import Individual
 from django.core.files.uploadedfile import InMemoryUploadedFile
 from msr_etl.apps import MsrEtlConfig
+
 
 class TestIndividualImportSink(TestCase):
 
@@ -126,6 +127,7 @@ class TestIndividualImportSink(TestCase):
         expected_csv = 'external_id,name,age\r\n456,Jane Smith,25\r\n'
         self.assertEqual(content, expected_csv)
 
+
 def mock_get_workflow(name, group):
     return {
         'success': True,
@@ -133,4 +135,3 @@ def mock_get_workflow(name, group):
             'workflows': [{'id': 1, 'name': name}]
         }
     }
-

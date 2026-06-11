@@ -87,7 +87,7 @@ class UBRIndividualSource(DataSource):
                     identifier = get_timestamped_batch_identifier(prefix)
                     logger.info(f"Sending {len(rows)} records to data adaptor to process")
                     yield rows, identifier
-                
+
                 # Add a 5-second sleep after processing each TA
                 logger.info(f"Sleeping for 5 seconds after processing TA: {ta_code}")
                 time.sleep(5)
@@ -120,7 +120,7 @@ class UBRLocationSource(DataSource):
             session, url, headers, {"geo_location_type_id": 1}, "districts"
         )
 
-        prefix = f"batch_districts_"
+        prefix = "batch_districts_"
         identifier = get_timestamped_batch_identifier(prefix)
         logger.debug(f"Sending {len(district_rows)} district records to data adaptor to process")
         yield {"data_type": "D", "data": district_rows}, identifier

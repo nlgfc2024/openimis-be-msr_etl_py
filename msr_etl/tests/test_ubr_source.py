@@ -3,11 +3,8 @@ from unittest.mock import patch, MagicMock
 
 from django.test import TestCase
 
-from msr_etl.apps import MsrEtlConfig
 from msr_etl.auth_provider import get_auth_provider
 from msr_etl.sources import UBRIndividualSource, UBRLocationSource
-from core.test_helpers import create_test_interactive_user
-from location.models import Location
 import requests
 
 MOCKED_UBR_RESPONSE_DATA = [
@@ -74,8 +71,8 @@ class UBRIndividualSourceTestCase(TestCase):
     @patch("location.models.Location.objects.filter")
     def test_ubr_source_pull(self, mock_location_filter, mock_post):
         """
-        Test that UBRIndividualSource.pull iterates over districts, TAs, and villages,
-        and makes one API call per village with correct params.
+        Test that UBRIndividualSource.pull iterates over districts and TAs,
+        and makes one API call per TA with correct params.
         """
         # Setup the filter mock to return different codes based on the filter arguments
         def filter_side_effect(*args, **kwargs):
@@ -100,15 +97,12 @@ class UBRIndividualSourceTestCase(TestCase):
 
         mock_location_filter.side_effect = filter_side_effect
 
-        # Mock the API responses for each village (4 villages)
+        # Mock the API responses for each TA.
         mock_post.side_effect = [
             MagicMock(ok=True, json=MagicMock(return_value=self.mocked_ubr_response_data[0])),
             MagicMock(ok=True, json=MagicMock(return_value=self.mocked_ubr_response_data[1])),
-            MagicMock(ok=True, json=MagicMock(return_value=self.mocked_ubr_response_data[2])),
-            MagicMock(ok=True, json=MagicMock(return_value=self.mocked_ubr_response_data[3])),
         ]
 
-        user = create_test_interactive_user(username="test_admin")
         source = UBRIndividualSource(get_auth_provider('noauth'), pmt_percentile_range=range(1, 3))
 
         pulled_data = []
@@ -118,33 +112,29 @@ class UBRIndividualSourceTestCase(TestCase):
             pulled_data += rows
             identifiers.append(identifier)
 
-        # There should be 4 API calls (one per village)
-        self.assertEqual(mock_post.call_count, 4)
+        # There should be 2 API calls (one per TA)
+        self.assertEqual(mock_post.call_count, 2)
         # Each call should have correct params
         for i, call in enumerate(mock_post.call_args_list):
             _, kwargs = call
             params = kwargs["params"]
             self.assertIn(params["district_code"], self.mocked_district_codes)
             self.assertIn(params["traditional_authority_code"], self.mocked_ta_codes)
-            self.assertIn(params["village_code"], sum(self.mocked_village_codes.values(), []))
             self.assertEqual(params["lower_percentile_category"], '1')
             self.assertEqual(params["upper_percentile_category"], '2')
             self.assertEqual(params["wealth_quintile"], "1,2,3")  # Assuming enum values are 1,2,3
 
         # All individuals should be present
-        self.assertEqual(len(pulled_data), 4)
+        self.assertEqual(len(pulled_data), 2)
         self.assertEqual(pulled_data[0]["firstName"], "Alice")
         self.assertEqual(pulled_data[1]["firstName"], "Bob")
-        self.assertEqual(pulled_data[2]["firstName"], "Charlie")
-        self.assertEqual(pulled_data[3]["firstName"], "Daisy")
 
-        # Identifiers should be unique per village and match the code structure
-        self.assertEqual(len(set(identifiers)), 4)
+        # Identifiers should be unique per TA and match the code structure
+        self.assertEqual(len(set(identifiers)), 2)
         for ta_code in self.mocked_ta_codes:
-            for village_code in self.mocked_village_codes[ta_code]:
-                self.assertTrue(any(f"batch_101_{ta_code}_{village_code}_" in ident for ident in identifiers))
+            self.assertTrue(any(f"batch_101_{ta_code}_" in ident for ident in identifiers))
 
-        logging.info(f"Successfully pulled {len(pulled_data)} households for all villages")
+        logging.info(f"Successfully pulled {len(pulled_data)} households for all TAs")
 
 
 class UBRLocationSourceTestCase(TestCase):
@@ -274,7 +264,7 @@ class UBRLocationSourceTestCase(TestCase):
         ]
 
         # Call the pull method
-        source = UBRLocationSource()
+        source = UBRLocationSource(get_auth_provider('noauth'))
         results = list(source.pull())
 
         # Assertions
@@ -291,4 +281,3 @@ class UBRLocationSourceTestCase(TestCase):
         self.assertEqual(len(results[2][0]["data"]), 2)  # Villages for District 101
         self.assertEqual(len(results[3][0]["data"]), 2)  # TAs for District 102
         self.assertEqual(len(results[4][0]["data"]), 2)  # Villages for District 102
-
