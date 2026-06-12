@@ -67,9 +67,10 @@ class UBRIndividualSourceTestCase(TestCase):
             },
         ]
 
+    @patch("time.sleep")
     @patch("requests.Session.post")
     @patch("location.models.Location.objects.filter")
-    def test_ubr_source_pull(self, mock_location_filter, mock_post):
+    def test_ubr_source_pull(self, mock_location_filter, mock_post, mock_sleep):
         """
         Test that UBRIndividualSource.pull iterates over districts and TAs,
         and makes one API call per TA with correct params.
@@ -135,6 +136,47 @@ class UBRIndividualSourceTestCase(TestCase):
             self.assertTrue(any(f"batch_101_{ta_code}_" in ident for ident in identifiers))
 
         logging.info(f"Successfully pulled {len(pulled_data)} households for all TAs")
+
+    @patch("time.sleep")
+    @patch("requests.Session.post")
+    @patch("location.models.Location.objects.filter")
+    def test_ubr_source_pull_with_location_filters(self, mock_location_filter, mock_post, mock_sleep):
+        def filter_side_effect(*args, **kwargs):
+            mock_qs = MagicMock()
+            mock_qs.exists.return_value = True
+            mock_qs.values_list.return_value = []
+            return mock_qs
+
+        mock_location_filter.side_effect = filter_side_effect
+        mock_post.return_value = MagicMock(
+            ok=True,
+            json=MagicMock(return_value=self.mocked_ubr_response_data[0])
+        )
+
+        source = UBRIndividualSource(
+            get_auth_provider('noauth'),
+            pmt_percentile_range=range(1, 3),
+            district="101",
+            ta="10101",
+            village="10101001",
+        )
+
+        pulled_data = []
+        identifiers = []
+        for rows, identifier in source.pull():
+            pulled_data += rows
+            identifiers.append(identifier)
+
+        self.assertEqual(mock_post.call_count, 1)
+        _, kwargs = mock_post.call_args
+        self.assertEqual(kwargs["params"]["district_code"], "101")
+        self.assertEqual(kwargs["params"]["traditional_authority_code"], "10101")
+        self.assertEqual(kwargs["params"]["village_code"], "10101001")
+        self.assertEqual(kwargs["params"]["lower_percentile_category"], "1")
+        self.assertEqual(kwargs["params"]["upper_percentile_category"], "2")
+        self.assertEqual(kwargs["params"]["wealth_quintile"], "1,2,3")
+        self.assertEqual(len(pulled_data), 1)
+        self.assertTrue(identifiers[0].startswith("batch_101_10101_"))
 
 
 class UBRLocationSourceTestCase(TestCase):

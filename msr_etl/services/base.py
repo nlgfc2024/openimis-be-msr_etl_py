@@ -34,7 +34,7 @@ class ETLService(metaclass=abc.ABCMeta):
 
     @staticmethod
     def _error_result(detail):
-        return {"success": False, "D": "Failed to execute ETL pipeline", "detail": detail}
+        return {"success": False, "message": "Failed to execute ETL pipeline", "detail": detail}
 
     @staticmethod
     def _success_result():

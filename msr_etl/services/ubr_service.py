@@ -9,11 +9,18 @@ class UBRIndividualService(ETLService):
 
     def __init__(self,
                  user: User,
+                 district: str = None,
+                 ta: str = None,
+                 village: str = None,
                  source: DataSource = None,
                  adapter: DataAdapter = None,
                  sink: DataSink = None):
         super().__init__(
-            source=source or UBRIndividualSource(),
+            source=source or UBRIndividualSource(
+                district=district,
+                ta=ta,
+                village=village,
+            ),
             adapter=adapter or UBRIndividualAdapter(),
             sink=sink or IndividualImportSink(user)
         )
