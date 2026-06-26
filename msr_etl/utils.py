@@ -7,8 +7,7 @@ from django.core.files.uploadedfile import InMemoryUploadedFile
 from typing import Any, Optional
 
 
-ETL_CLASS = "msr_etl.services"
-ETL = "msr_etl.services.base"
+MSR_ETL_CLASS = "msr_etl.services"
 
 
 def get_class_by_name(module_name, class_name):
