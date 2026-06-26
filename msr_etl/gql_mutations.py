@@ -11,7 +11,7 @@ from msr_etl.adapters import UBRIndividualAdapter, UBRLocationAdapter
 from msr_etl.utils import (
     get_class_by_name,
     get_timestamped_batch_identifier,
-    ETL_CLASS,
+    MSR_ETL_CLASS,
 )
 from msr_etl.apps import MsrEtlConfig
 from core.gql.gql_mutations.base_mutation import BaseMutation
@@ -51,7 +51,7 @@ class MsrEtlServiceMutation(BaseMutation):
                     'detail': _('There is no ETL service with provided name')
                 }]
 
-            etl_service_class = get_class_by_name(ETL_CLASS, name_of_service)
+            etl_service_class = get_class_by_name(MSR_ETL_CLASS, name_of_service)
             service_kwargs = cls._get_supported_service_kwargs(etl_service_class, data)
 
             # Instantiate and execute the ETL service
