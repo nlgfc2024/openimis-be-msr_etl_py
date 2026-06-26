@@ -32,6 +32,13 @@ class MsrEtlServiceMutation(BaseMutation):
         district = graphene.String(required=False)
         ta = graphene.String(required=False)
         village = graphene.String(required=False)
+        lower_percentile_category = graphene.Int(required=False)
+        upper_percentile_category = graphene.Int(required=False)
+        wealth_quintiles = graphene.List(graphene.Int, required=False)
+        classification = graphene.List(graphene.Int, required=False)
+        gender = graphene.String(required=False)
+        minAge = graphene.Int(required=False)
+        maxAge = graphene.Int(required=False)
 
     @classmethod
     def _validate_mutation(cls, user, **data):
