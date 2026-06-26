@@ -8,7 +8,7 @@ The module is intentionally separate from the generic `api_etl` module. Both mod
 
 The MSR ETL module supports a frontend-driven synchronization cycle:
 
-1. The frontend sends location filters: `district`, `ta`, and optionally `village`.
+1. The frontend sends filters: location codes (`district`, `ta`, `village`) and UBR-specific targeting criteria (PMT percentile range, wealth quintiles, classification, gender, age range).
 2. The backend fetches matching data from the external UBR API.
 3. The backend returns the fetched records to the frontend for preview/selection.
 4. The frontend sends selected records back to the backend.
@@ -68,8 +68,30 @@ All fields are namespaced with `msr` to avoid conflicts with the generic `api_et
 Use this query to fetch household records from UBR. The response contains raw UBR records so the frontend can preview and select records before saving.
 
 ```graphql
-query FetchMsrUbrIndividuals($district: String, $ta: String, $village: String) {
-  msrUbrIndividuals(district: $district, ta: $ta, village: $village) {
+query FetchMsrUbrIndividuals(
+  $district: String
+  $ta: String
+  $village: String
+  $lowerPercentileCategory: Int
+  $upperPercentileCategory: Int
+  $wealthQuintiles: [Int]
+  $classification: [Int]
+  $gender: String
+  $minAge: Int
+  $maxAge: Int
+) {
+  msrUbrIndividuals(
+    district: $district
+    ta: $ta
+    village: $village
+    lowerPercentileCategory: $lowerPercentileCategory
+    upperPercentileCategory: $upperPercentileCategory
+    wealthQuintiles: $wealthQuintiles
+    classification: $classification
+    gender: $gender
+    minAge: $minAge
+    maxAge: $maxAge
+  ) {
     count
     district
     ta
@@ -79,23 +101,59 @@ query FetchMsrUbrIndividuals($district: String, $ta: String, $village: String) {
 }
 ```
 
-Example variables:
+Example variables (narrowly targeted fetch):
 
 ```json
 {
   "district": "101",
   "ta": "10101",
-  "village": "10101001"
+  "village": "10101001",
+  "lowerPercentileCategory": 0,
+  "upperPercentileCategory": 20,
+  "wealthQuintiles": [1, 2, 3],
+  "gender": "Female",
+  "minAge": 18,
+  "maxAge": 60
 }
 ```
 
+**Location filters** (all optional — narrower scope = fewer API calls):
+
+| Argument | Meaning | UBR param | Default |
+|----------|---------|-----------|---------|
+| `district` | District code | `district_code` | all active districts |
+| `ta` | Traditional authority code | `traditional_authority_code` | all TAs in district |
+| `village` | Village code | `village_code` | all villages in TA |
+
+**Targeting filters** (all optional — forwarded directly to the UBR API):
+
+| Argument | Meaning | UBR param | Default |
+|----------|---------|-----------|---------|
+| `lowerPercentileCategory` | Lower bound of PMT percentile range (0–100) | `lower_percentile_category` | `0` |
+| `upperPercentileCategory` | Upper bound of PMT percentile range (0–100) | `upper_percentile_category` | `10` |
+| `wealthQuintiles` | List of wealth quintile IDs to include | `wealth_quintile` (comma-separated) | `[1, 2, 3]` (Poorest, Poorer, Poor) |
+| `classification` | Alternative quintile override — replaces `wealthQuintiles` when provided | `wealth_quintile` | not sent |
+| `gender` | Gender string as returned by UBR (e.g. `"Male"`, `"Female"`) | `gender` | not sent |
+| `minAge` | Minimum age of household members | `minAge` | not sent |
+| `maxAge` | Maximum age of household members | `maxAge` | not sent |
+
+Wealth quintile values:
+
+| ID | Label |
+|----|-------|
+| 1 | Poorest |
+| 2 | Poorer |
+| 3 | Poor |
+| 4 | Better |
+| 5 | Rich |
+
 Backend behavior:
 
-- `district` filters by UBR/openIMIS district code.
-- `ta` filters by traditional authority code.
-- `village` is sent to UBR as `village_code`.
 - If no `district` is provided, the backend iterates all active openIMIS districts.
-- If no `ta` is provided, the backend iterates active TAs under the selected district.
+- If no `ta` is provided, the backend iterates all active TAs under the district.
+- Each district/TA pair results in a separate UBR API call; the module sleeps 5 seconds between calls to avoid rate limiting.
+- `classification` takes precedence over `wealthQuintiles` when both are supplied.
+- Location codes are validated against active openIMIS `Location` records before any UBR API call is made.
 
 ### Save Selected Individuals
 
@@ -187,24 +245,35 @@ The backend then:
 2. Transforms UBR geo-location records with `UBRLocationAdapter`.
 3. Creates or updates openIMIS `Location` records through `LocationImportSink`.
 
-### Legacy Full ETL Execution
+### Full ETL Execution (server-side pipeline)
 
-The module still exposes a full ETL execution mutation for operational use:
+The module exposes a direct ETL execution mutation that runs the full fetch-transform-save pipeline in a single server-side operation, without a frontend preview step. All UBR individual filters are supported:
 
 ```graphql
 mutation ExecuteMsrEtlService {
   executeMsrEtlService(input: {
-    nameOfService: "UBRIndividualService",
-    district: "101",
-    ta: "10101",
+    nameOfService: "UBRIndividualService"
+    district: "101"
+    ta: "10101"
     village: "10101001"
+    lowerPercentileCategory: 0
+    upperPercentileCategory: 20
+    wealthQuintiles: [1, 2, 3]
+    gender: "Female"
+    minAge: 18
+    maxAge: 60
   }) {
     internalId
   }
 }
 ```
 
-For the frontend preview/save workflow, prefer `msrUbrIndividuals`, `saveMsrUbrIndividuals`, `msrUbrLocations`, and `saveMsrUbrLocations`.
+Supported `nameOfService` values:
+
+- `UBRIndividualService` — fetches and saves household member records.
+- `UBRLocationService` — fetches and saves geo-location records.
+
+> For the frontend preview/select/save workflow, prefer `msrUbrIndividuals`, `saveMsrUbrIndividuals`, `msrUbrLocations`, and `saveMsrUbrLocations` instead.
 
 ## Permissions
 
@@ -225,29 +294,41 @@ Default rights:
 - Query: `953001`
 - Mutation: `953002`
 
-## Location Filter Semantics
+## Module Architecture
 
-The frontend should send codes, not names:
+### ETL pipeline
 
-| Frontend field | Meaning | UBR parameter |
-| --- | --- | --- |
-| `district` | District code | `district_code` |
-| `ta` | Traditional authority code | `traditional_authority_code` |
-| `village` | Village code | `village_code` |
+```
+GraphQL query / mutation
+        │
+        ▼
+   DataSource          ← pulls raw records from UBR API (ubr_source.py)
+        │
+        ▼
+   DataAdapter         ← transforms UBR records into openIMIS-compatible dicts (ubr_adapter.py)
+        │
+        ▼
+    DataSink           ← upserts into openIMIS Individual / Location modules (sinks/)
+```
 
-For individual fetches, the backend validates the hierarchy against active openIMIS `Location` records before calling UBR.
+For the preview workflow the pipeline is split across two round trips:
+- **Query** → `DataSource.fetch()` only (returns raw records to the frontend).
+- **Mutation** → `DataAdapter` + `DataSink` only (receives selected records from the frontend).
 
-For location fetches, the backend fetches UBR geo locations and filters returned records by the supplied codes.
+### Key files
 
-## Main Code Paths
-
-- `msr_etl/schema.py`: GraphQL query and mutation registration.
-- `msr_etl/gql_queries.py`: MSR-specific GraphQL output types.
-- `msr_etl/gql_mutations.py`: Save and execute mutations.
-- `msr_etl/sources/ubr_source.py`: UBR API fetch logic.
-- `msr_etl/adapters/ubr_adapter.py`: UBR-to-openIMIS transformation logic.
-- `msr_etl/sinks/individual_import_sink.py`: Sync to the individual module.
-- `msr_etl/sinks/location_import_sink.py`: Sync to the location module.
+| File | Responsibility |
+|------|---------------|
+| `msr_etl/schema.py` | GraphQL query and mutation registration |
+| `msr_etl/gql_queries.py` | MSR-specific GraphQL output types |
+| `msr_etl/gql_mutations.py` | Save and execute mutations |
+| `msr_etl/services/base.py` | `MsrETLService` abstract base class |
+| `msr_etl/services/ubr_service.py` | `UBRIndividualService`, `UBRLocationService` |
+| `msr_etl/sources/ubr_source.py` | UBR API fetch logic and filter building |
+| `msr_etl/adapters/ubr_adapter.py` | UBR-to-openIMIS record transformation |
+| `msr_etl/sinks/individual_import_sink.py` | Sync to the openIMIS individual module |
+| `msr_etl/sinks/location_import_sink.py` | Sync to the openIMIS location module |
+| `msr_etl/models.py` | `UBRWealthQuintiles` and `UBRRegion` enums |
 
 ## Development Notes
 
