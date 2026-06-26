@@ -33,6 +33,13 @@ class Query(graphene.ObjectType):
         district=graphene.Argument(graphene.String, required=False),
         ta=graphene.Argument(graphene.String, required=False),
         village=graphene.Argument(graphene.String, required=False),
+        lower_percentile_category=graphene.Argument(graphene.Int, required=False),
+        upper_percentile_category=graphene.Argument(graphene.Int, required=False),
+        wealth_quintiles=graphene.Argument(graphene.List(graphene.Int), required=False),
+        classification=graphene.Argument(graphene.List(graphene.Int), required=False),
+        gender=graphene.Argument(graphene.String, required=False),
+        minAge=graphene.Argument(graphene.Int, required=False),
+        maxAge=graphene.Argument(graphene.Int, required=False),
     )
 
     msr_ubr_locations = graphene.Field(
@@ -75,10 +82,31 @@ class Query(graphene.ObjectType):
         if not info.context.user.has_perms(MsrEtlConfig.gql_query_msr_etl_rule_perms):
             raise PermissionError("Unauthorized")
 
+        lower_percentile_category = kwargs.get("lower_percentile_category")
+        upper_percentile_category = kwargs.get("upper_percentile_category")
+        wealth_quintiles = kwargs.get("wealth_quintiles")
+        classification = kwargs.get("classification")
+        gender = kwargs.get("gender")
+        min_age = kwargs.get("minAge")
+        max_age = kwargs.get("maxAge")
+
+        if lower_percentile_category is not None or upper_percentile_category is not None:
+            lower = 0 if lower_percentile_category is None else lower_percentile_category
+            upper = 100 if upper_percentile_category is None else upper_percentile_category
+            pmt_percentile_range = range(lower, upper + 1)
+        else:
+            pmt_percentile_range = range(0, 11)
+
         source = UBRIndividualSource(
             district=kwargs.get("district"),
             ta=kwargs.get("ta"),
             village=kwargs.get("village"),
+            pmt_percentile_range=pmt_percentile_range,
+            wealth_quintiles=wealth_quintiles,
+            classification=classification,
+            gender=gender,
+            min_age=min_age,
+            max_age=max_age,
         )
         individuals = source.fetch()
         return MsrUbrIndividualsGQLType(
