@@ -3,7 +3,7 @@ from django.apps import AppConfig
 MODULE_NAME = "msr_etl"
 
 DEFAULT_CONFIG = {
-    "auth_type": "basic",  # noauth, basic, bearer
+    "auth_type": "noauth",  # noauth, basic, bearer
     "auth_basic_username": "",  # basic auth username
     "auth_basic_password": "",  # basic auth password
     "auth_bearer_token": "",  # bearer token
