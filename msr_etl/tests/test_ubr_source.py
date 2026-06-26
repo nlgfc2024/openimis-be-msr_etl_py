@@ -104,7 +104,15 @@ class UBRIndividualSourceTestCase(TestCase):
             MagicMock(ok=True, json=MagicMock(return_value=self.mocked_ubr_response_data[1])),
         ]
 
-        source = UBRIndividualSource(get_auth_provider('noauth'), pmt_percentile_range=range(1, 3))
+        source = UBRIndividualSource(
+            get_auth_provider('noauth'),
+            pmt_percentile_range=range(1, 3),
+            wealth_quintiles=[1, 2, 3, 4],
+            classification=[4, 5],
+            gender="Female",
+            min_age=18,
+            max_age=60,
+        )
 
         pulled_data = []
         identifiers = []
@@ -123,7 +131,10 @@ class UBRIndividualSourceTestCase(TestCase):
             self.assertIn(params["traditional_authority_code"], self.mocked_ta_codes)
             self.assertEqual(params["lower_percentile_category"], '1')
             self.assertEqual(params["upper_percentile_category"], '2')
-            self.assertEqual(params["wealth_quintile"], "1,2,3")  # Assuming enum values are 1,2,3
+            self.assertEqual(params["wealth_quintile"], "4,5")
+            self.assertEqual(params["gender"], "Female")
+            self.assertEqual(params["minAge"], "18")
+            self.assertEqual(params["maxAge"], "60")
 
         # All individuals should be present
         self.assertEqual(len(pulled_data), 2)
@@ -159,6 +170,11 @@ class UBRIndividualSourceTestCase(TestCase):
             district="101",
             ta="10101",
             village="10101001",
+            wealth_quintiles=[2, 5],
+            classification=[3],
+            gender="Male",
+            min_age=5,
+            max_age=17,
         )
 
         pulled_data = []
@@ -174,7 +190,10 @@ class UBRIndividualSourceTestCase(TestCase):
         self.assertEqual(kwargs["params"]["village_code"], "10101001")
         self.assertEqual(kwargs["params"]["lower_percentile_category"], "1")
         self.assertEqual(kwargs["params"]["upper_percentile_category"], "2")
-        self.assertEqual(kwargs["params"]["wealth_quintile"], "1,2,3")
+        self.assertEqual(kwargs["params"]["wealth_quintile"], "3")
+        self.assertEqual(kwargs["params"]["gender"], "Male")
+        self.assertEqual(kwargs["params"]["minAge"], "5")
+        self.assertEqual(kwargs["params"]["maxAge"], "17")
         self.assertEqual(len(pulled_data), 1)
         self.assertTrue(identifiers[0].startswith("batch_101_10101_"))
 

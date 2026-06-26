@@ -21,12 +21,14 @@ setup(
     author_email='kmalinowski@soldevelo.com',
     install_requires=[
         'django',
+        'requests',
+        'pytest-django',
+        'graphene-django',
         'django-db-signals',
         'djangorestframework',
         'openimis-be-core',
         'openimis-be-individual',
         'openimis-be-location',
-        'requests',
     ],
     classifiers=[
         'Environment :: Web Environment',

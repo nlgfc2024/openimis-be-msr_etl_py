@@ -1,32 +1,52 @@
 from msr_etl.adapters import DataAdapter, UBRIndividualAdapter, UBRLocationAdapter
-from msr_etl.services.base import ETLService
+from msr_etl.services.base import MsrETLService
 from msr_etl.sinks import DataSink, IndividualImportSink, LocationImportSink
 from msr_etl.sources import DataSource, UBRIndividualSource, UBRLocationSource
 from core.models import User
 
 
-class UBRIndividualService(ETLService):
+class UBRIndividualService(MsrETLService):
 
     def __init__(self,
                  user: User,
                  district: str = None,
                  ta: str = None,
                  village: str = None,
+                 lower_percentile_category: int = None,
+                 upper_percentile_category: int = None,
+                 wealth_quintiles: list = None,
+                 classification: list = None,
+                 gender: str = None,
+                 minAge: int = None,
+                 maxAge: int = None,
                  source: DataSource = None,
                  adapter: DataAdapter = None,
                  sink: DataSink = None):
+        if lower_percentile_category is not None or upper_percentile_category is not None:
+            lower = 0 if lower_percentile_category is None else lower_percentile_category
+            upper = 100 if upper_percentile_category is None else upper_percentile_category
+            pmt_percentile_range = range(lower, upper + 1)
+        else:
+            pmt_percentile_range = range(0, 11)
+
         super().__init__(
             source=source or UBRIndividualSource(
                 district=district,
                 ta=ta,
                 village=village,
+                pmt_percentile_range=pmt_percentile_range,
+                wealth_quintiles=wealth_quintiles,
+                classification=classification,
+                gender=gender,
+                min_age=minAge,
+                max_age=maxAge,
             ),
             adapter=adapter or UBRIndividualAdapter(),
             sink=sink or IndividualImportSink(user)
         )
 
 
-class UBRLocationService(ETLService):
+class UBRLocationService(MsrETLService):
 
     def __init__(self,
                  user: User,

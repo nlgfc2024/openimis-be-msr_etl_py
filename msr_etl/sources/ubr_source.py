@@ -22,6 +22,11 @@ class UBRIndividualSource(DataSource):
         district: str = None,
         ta: str = None,
         village: str = None,
+        wealth_quintiles: list = None,
+        classification: list = None,
+        gender: str = None,
+        min_age: int = None,
+        max_age: int = None,
     ):
         super().__init__()
 
@@ -33,6 +38,15 @@ class UBRIndividualSource(DataSource):
         self.district = district
         self.ta = ta
         self.village = village
+        self.wealth_quintiles = wealth_quintiles or [
+            UBRWealthQuintiles.POOREST.value,
+            UBRWealthQuintiles.POORER.value,
+            UBRWealthQuintiles.POOR.value,
+        ]
+        self.classification = classification
+        self.gender = gender
+        self.min_age = min_age
+        self.max_age = max_age
 
     def pull(self):
         headers = {
@@ -84,12 +98,16 @@ class UBRIndividualSource(DataSource):
             "traditional_authority_code": ta_code,
             "lower_percentile_category": str(self.pmt_percentile_range.start),
             "upper_percentile_category": str(self.pmt_percentile_range.stop - 1),
-            "wealth_quintile": ",".join([
-                str(UBRWealthQuintiles.POOREST.value),
-                str(UBRWealthQuintiles.POORER.value),
-                str(UBRWealthQuintiles.POOR.value),
-            ]),
+            "wealth_quintile": ",".join([str(q) for q in self.wealth_quintiles]),
         }
+        if self.classification:
+            params["wealth_quintile"] = ",".join([str(c) for c in self.classification])
+        if self.gender:
+            params["gender"] = self.gender
+        if self.min_age is not None:
+            params["minAge"] = str(self.min_age)
+        if self.max_age is not None:
+            params["maxAge"] = str(self.max_age)
         if self.village:
             self._validate_village_code(ta_code)
             params["village_code"] = self.village
