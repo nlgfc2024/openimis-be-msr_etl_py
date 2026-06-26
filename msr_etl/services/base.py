@@ -8,7 +8,7 @@ from msr_etl.sources import DataSource
 logger = logging.getLogger(__name__)
 
 
-class ETLService(metaclass=abc.ABCMeta):
+class MsrETLService(metaclass=abc.ABCMeta):
     """
     ETL Service class representing a full ETL pipeline
     """
