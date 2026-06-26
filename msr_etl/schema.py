@@ -17,7 +17,7 @@ from msr_etl.sources import UBRIndividualSource, UBRLocationSource
 from msr_etl.utils import (
     get_class_by_name,
     get_classes_in_module,
-    ETL_CLASS
+    MSR_ETL_CLASS
 )
 
 
@@ -50,7 +50,7 @@ class Query(graphene.ObjectType):
         service_name = kwargs.get("name_of_service", None)
         if service_name:
             # check if provided service etl class exists in application
-            class_service = get_class_by_name(ETL_CLASS, service_name)
+            class_service = get_class_by_name(MSR_ETL_CLASS, service_name)
             if class_service:
                 list_sr.append(
                     MsrEtlServiceGQLType(
@@ -59,7 +59,7 @@ class Query(graphene.ObjectType):
                 )
         else:
             # get all etl classes within module
-            class_service_list = get_classes_in_module(ETL_CLASS)
+            class_service_list = get_classes_in_module(MSR_ETL_CLASS)
             for class_service in class_service_list:
                 list_sr.append(
                     MsrEtlServiceGQLType(
