@@ -13,6 +13,8 @@ DEFAULT_CONFIG = {
     "source_headers": {},
     "source_batch_size": 50,
 
+    "ubr_programme_parameter_id": 2,
+
     "adapter_first_name_field": "firstName",
     "adapter_last_name_field": "lastName",
     "adapter_dob_field": "dateOfBirth",
@@ -40,6 +42,8 @@ class MsrEtlConfig(AppConfig):
     source_url = None
     source_headers = None
     source_batch_size = None
+
+    ubr_programme_parameter_id = None
 
     adapter_first_name_field = None
     adapter_last_name_field = None

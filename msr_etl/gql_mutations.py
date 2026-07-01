@@ -39,6 +39,10 @@ class MsrEtlServiceMutation(BaseMutation):
         gender = graphene.String(required=False)
         minAge = graphene.Int(required=False)
         maxAge = graphene.Int(required=False)
+        has_labour = graphene.Boolean(required=False)
+        labour_constrained = graphene.Boolean(required=False)
+        excluded_programme_codes = graphene.List(graphene.String, required=False)
+        household_head_gender = graphene.Int(required=False)
 
     @classmethod
     def _validate_mutation(cls, user, **data):

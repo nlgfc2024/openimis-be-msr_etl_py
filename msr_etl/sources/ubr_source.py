@@ -27,6 +27,10 @@ class UBRIndividualSource(DataSource):
         gender: str = None,
         min_age: int = None,
         max_age: int = None,
+        has_labour: bool = None,
+        labour_constrained: bool = None,
+        excluded_programme_codes: list = None,
+        household_head_gender: int = None,
     ):
         super().__init__()
 
@@ -47,6 +51,12 @@ class UBRIndividualSource(DataSource):
         self.gender = gender
         self.min_age = min_age
         self.max_age = max_age
+        self.has_labour = has_labour
+        self.labour_constrained = labour_constrained
+        self.excluded_programme_codes = [
+            str(code) for code in (excluded_programme_codes or [])
+        ]
+        self.household_head_gender = household_head_gender
 
     def pull(self):
         headers = {
@@ -129,7 +139,8 @@ class UBRIndividualSource(DataSource):
             logger.error(f"Error in response: {body.get('error_message')}")
             raise self.Error(f"Error in response: {body.get('error_message')}")
 
-        return body.get("targeting_data", [])
+        rows = body.get("targeting_data", [])
+        return self._apply_local_filters(rows)
 
     def _get_district_codes(self):
         if self.district:
@@ -175,6 +186,123 @@ class UBRIndividualSource(DataSource):
             raise self.Error(
                 f"Village code '{self.village}' was not found under TA '{ta_code}'."
             )
+
+    def _apply_local_filters(self, rows):
+        filtered = []
+
+        for row in rows:
+            if self.has_labour is not None:
+                if self._household_has_labour(row) != self.has_labour:
+                    continue
+
+            if self.labour_constrained is not None:
+                if self._household_is_labour_constrained(row) != self.labour_constrained:
+                    continue
+
+            if self.household_head_gender is not None:
+                if not self._household_head_gender_matches(row):
+                    continue
+
+            if self.excluded_programme_codes:
+                if self._household_has_excluded_programme(row):
+                    continue
+
+            filtered.append(row)
+
+        return filtered
+
+
+    def _household_has_labour(self, row):
+        summary = row.get("household_summary") or {}
+        members_fit_for_work = summary.get("members_fit_for_work")
+
+        try:
+            return int(members_fit_for_work or 0) > 0
+        except (TypeError, ValueError):
+            members = row.get("household_members") or []
+            return any(self._as_bool(member.get("fit_for_work")) for member in members)
+
+
+    def _household_is_labour_constrained(self, row):
+        summary = row.get("household_summary") or {}
+        return self._as_bool(summary.get("labour_constrained"))
+
+
+    def _household_head_gender_matches(self, row):
+        summary = row.get("household_summary") or {}
+        household_head_gender = summary.get("household_head_gender")
+
+        if household_head_gender is None:
+            return False
+
+        return str(household_head_gender) == str(self.household_head_gender)
+
+
+    def _household_has_excluded_programme(self, row):
+        programme_parameter_id = str(
+            getattr(MsrEtlConfig, "ubr_programme_parameter_id", 2) or 2
+        )
+        excluded_codes = set(self.excluded_programme_codes)
+
+        for response in self._as_list(row.get("household_combined_responses")):
+            general_parameter = response.get("general_parameter") or {}
+            if self._general_parameter_matches_programme(
+                general_parameter,
+                programme_parameter_id,
+                excluded_codes,
+            ):
+                return True
+
+        for programme in self._as_list(row.get("household_programmes")):
+            general_parameter = programme.get("general_parameter") or programme
+            if self._general_parameter_matches_programme(
+                general_parameter,
+                programme_parameter_id,
+                excluded_codes,
+            ):
+                return True
+
+        return False
+
+
+    @staticmethod
+    def _general_parameter_matches_programme(
+        general_parameter,
+        programme_parameter_id,
+        excluded_codes,
+    ):
+        if not general_parameter:
+            return False
+
+        return (
+            str(general_parameter.get("parameter_id")) == programme_parameter_id
+            and str(general_parameter.get("parameter_code")) in excluded_codes
+        )
+
+
+    @staticmethod
+    def _as_bool(value):
+        if isinstance(value, bool):
+            return value
+
+        if value is None:
+            return False
+
+        if isinstance(value, (int, float)):
+            return value == 1
+
+        return str(value).strip().lower() in ("1", "true", "yes", "y")
+
+
+    @staticmethod
+    def _as_list(value):
+        if value is None:
+            return []
+
+        if isinstance(value, list):
+            return value
+
+        return [value]
 
 
 class UBRLocationSource(DataSource):
