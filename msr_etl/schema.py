@@ -7,13 +7,16 @@ from msr_etl.gql_queries import (
     MsrUbrIndividualsGQLType,
     MsrUbrLocationBatchGQLType,
     MsrUbrLocationsGQLType,
+    MsrUbrLocationInitialPullStatusGQLType,
 )
 from msr_etl.gql_mutations import (
     MsrEtlServiceMutation,
     SaveMsrUbrIndividualsMutation,
     SaveMsrUbrLocationsMutation,
+    ScheduleMsrUbrLocationInitialPullMutation,
 )
 from msr_etl.sources import UBRIndividualSource, UBRLocationSource
+from msr_etl.tasks.sync_job import get_ubr_location_initial_pull_status
 from msr_etl.utils import (
     get_class_by_name,
     get_classes_in_module,
@@ -46,7 +49,13 @@ class Query(graphene.ObjectType):
         MsrUbrLocationsGQLType,
         district=graphene.Argument(graphene.String, required=False),
         ta=graphene.Argument(graphene.String, required=False),
+        gvh=graphene.Argument(graphene.String, required=False),
         village=graphene.Argument(graphene.String, required=False),
+    )
+
+    msr_ubr_location_initial_pull_status = graphene.Field(
+        MsrUbrLocationInitialPullStatusGQLType,
+        request_id=graphene.Argument(graphene.String, required=True),
     )
 
     def _resolve_etl_services(parent, info, **kwargs):
@@ -125,6 +134,7 @@ class Query(graphene.ObjectType):
         raw_batches = source.fetch(
             district=kwargs.get("district"),
             ta=kwargs.get("ta"),
+            gvh=kwargs.get("gvh"),
             village=kwargs.get("village"),
         )
         batches = [
@@ -140,8 +150,27 @@ class Query(graphene.ObjectType):
             count=sum(batch.count for batch in batches),
         )
 
+    def resolve_msr_ubr_location_initial_pull_status(parent, info, **kwargs):
+        if not info.context.user.has_perms(MsrEtlConfig.gql_query_msr_etl_rule_perms):
+            raise PermissionError("Unauthorized")
+
+        request_id = kwargs.get("request_id")
+        status_payload = get_ubr_location_initial_pull_status(request_id)
+        if not status_payload:
+            return None
+
+        return MsrUbrLocationInitialPullStatusGQLType(
+            request_id=status_payload.get("request_id"),
+            status=status_payload.get("status"),
+            message=status_payload.get("message"),
+            started_at=status_payload.get("started_at"),
+            finished_at=status_payload.get("finished_at"),
+            updated_at=status_payload.get("updated_at"),
+        )
+
 
 class Mutation(graphene.ObjectType):
     execute_msr_etl_service = MsrEtlServiceMutation.Field()
     save_msr_ubr_individuals = SaveMsrUbrIndividualsMutation.Field()
     save_msr_ubr_locations = SaveMsrUbrLocationsMutation.Field()
+    schedule_msr_ubr_location_initial_pull = ScheduleMsrUbrLocationInitialPullMutation.Field()
