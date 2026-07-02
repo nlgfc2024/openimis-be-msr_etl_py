@@ -15,6 +15,17 @@ WORKFLOW_GROUP = "individual"
 GROUP_AGGREGATION_COLUMN = None
 
 
+def resolve_import_user(user: User):
+    username = MsrEtlConfig.sink_import_username
+    if username:
+        import_user = User.objects.filter(username=username).first()
+        if not import_user:
+            raise DataSink.Error(f"Configured sink_import_username not found: {username}")
+        return ensure_import_user_login_name(import_user)
+
+    return ensure_import_user_login_name(user)
+
+
 def ensure_import_user_login_name(user: User):
     try:
         login_name = getattr(user, 'login_name')
@@ -36,7 +47,7 @@ class IndividualImportSink(DataSink):
 
     def __init__(self, user: User):
         super().__init__()
-        self.service = IndividualImportService(ensure_import_user_login_name(user))
+        self.service = IndividualImportService(resolve_import_user(user))
         self.import_new_workflow = self.get_workflow(IMPORT_NEW_INDIVIDUALS)
         self.update_existing_workflow = self.get_workflow(UPDATE_EXISTING_INDIVIDUALS)
 

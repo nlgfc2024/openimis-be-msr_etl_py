@@ -13,6 +13,7 @@ class TestIndividualImportSink(TestCase):
         self.user = LogInHelper().get_or_create_user_api()
         MsrEtlConfig.sink_model_lookup_field = 'json_ext__external_id'
         MsrEtlConfig.sink_update_existing = True
+        MsrEtlConfig.sink_import_username = ''
 
         # Create existing individual in the database
         self.individual = Individual(
@@ -69,6 +70,46 @@ class TestIndividualImportSink(TestCase):
         service_user = mock_import_service.call_args[0][0]
         self.assertEqual(service_user.login_name, 'admin')
         self.assertEqual(service_user.username, 'Yutaka')
+
+    @patch('msr_etl.sinks.individual_import_sink.User.objects')
+    @patch('msr_etl.sinks.individual_import_sink.IndividualImportService')
+    @patch('msr_etl.sinks.individual_import_sink.WorkflowService.get_workflows')
+    def test_init_uses_configured_import_username(
+            self,
+            mock_get_workflows,
+            mock_import_service,
+            mock_user_objects,
+    ):
+        class ImportUserWrapper:
+            login_name = 'Admin'
+            username = 'Admin'
+
+        mock_get_workflows.side_effect = mock_get_workflow
+        mock_user_objects.filter.return_value.first.return_value = ImportUserWrapper()
+        MsrEtlConfig.sink_import_username = 'Admin'
+
+        IndividualImportSink(self.user)
+
+        service_user = mock_import_service.call_args[0][0]
+        mock_user_objects.filter.assert_called_once_with(username='Admin')
+        self.assertEqual(service_user.login_name, 'Admin')
+        self.assertEqual(service_user.username, 'Admin')
+
+    @patch('msr_etl.sinks.individual_import_sink.User.objects')
+    @patch('msr_etl.sinks.individual_import_sink.WorkflowService.get_workflows')
+    def test_init_raises_when_configured_import_username_missing(
+            self,
+            mock_get_workflows,
+            mock_user_objects,
+    ):
+        mock_get_workflows.side_effect = mock_get_workflow
+        mock_user_objects.filter.return_value.first.return_value = None
+        MsrEtlConfig.sink_import_username = 'MissingUser'
+
+        with self.assertRaises(IndividualImportSink.Error) as context:
+            IndividualImportSink(self.user)
+
+        self.assertIn('Configured sink_import_username not found: MissingUser', str(context.exception))
 
     @patch('msr_etl.sinks.individual_import_sink.WorkflowService.get_workflows')
     def test_init_no_workflow_found(self, mock_get_workflows):

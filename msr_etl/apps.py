@@ -23,6 +23,7 @@ DEFAULT_CONFIG = {
 
     "sink_model_lookup_field": "json_ext__external_id",
     "sink_update_existing": True,
+    "sink_import_username": "",
 
     "gql_query_msr_etl_rule_perms": ["953001"],
     "gql_mutation_execute_msr_etl_rule_perms": ["953002"],
@@ -53,6 +54,7 @@ class MsrEtlConfig(AppConfig):
 
     sink_model_lookup_field = None
     sink_update_existing = None
+    sink_import_username = None
 
     gql_query_msr_etl_rule_perms = None
     gql_mutation_execute_msr_etl_rule_perms = None
