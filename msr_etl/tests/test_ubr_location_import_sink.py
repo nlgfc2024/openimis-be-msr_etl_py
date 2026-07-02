@@ -1,5 +1,6 @@
 from django.test import TestCase
 from unittest.mock import patch
+from django.utils import timezone
 from msr_etl.sinks.location_import_sink import LocationImportSink
 from location.models import Location
 from core.test_helpers import LogInHelper
@@ -59,6 +60,23 @@ class TestLocationImportSink(TestCase):
 
     @patch("location.models.Location.objects.bulk_create")
     @patch("location.models.Location.objects.bulk_update")
+    def test_push_deduplicates_same_code_type_in_batch(self, mock_bulk_update, mock_bulk_create):
+        data = [
+            {"code": "105", "name": "First Name", "type": "D"},
+            {"code": "105", "name": "Latest Name", "type": "D"},
+        ]
+
+        self.sink.push(data)
+
+        self.assertEqual(mock_bulk_create.call_count, 1)
+        created_locations = list(mock_bulk_create.call_args[0][0])
+        self.assertEqual(len(created_locations), 1)
+        self.assertEqual(created_locations[0].code, "105")
+        self.assertEqual(created_locations[0].name, "Latest Name")
+        mock_bulk_update.assert_not_called()
+
+    @patch("location.models.Location.objects.bulk_create")
+    @patch("location.models.Location.objects.bulk_update")
     def test_push_only_new_locations(self, mock_bulk_update, mock_bulk_create):
         self.sink.push(self.new_location_data)
 
@@ -102,6 +120,30 @@ class TestLocationImportSink(TestCase):
         # Assert update records are correctly identified
         self.assertEqual(len(update_records), 1)
         self.assertEqual(update_records[0]["code"], "101")
+
+    def test_split_existing_and_new_uses_code_and_type(self):
+        data = [{"code": "101", "name": "Chitipa Catchment", "type": "W"}]
+
+        new_records, update_records = self.sink._split_existing_and_new(data)
+
+        self.assertEqual(len(new_records), 1)
+        self.assertEqual(len(update_records), 0)
+        self.assertEqual(new_records[0]["type"], "W")
+
+    def test_split_existing_and_new_ignores_historical_rows(self):
+        Location.objects.create(
+            code="104",
+            name="Old Name",
+            type="D",
+            validity_to=timezone.now(),
+        )
+        data = [{"code": "104", "name": "New Name", "type": "D"}]
+
+        new_records, update_records = self.sink._split_existing_and_new(data)
+
+        self.assertEqual(len(new_records), 1)
+        self.assertEqual(len(update_records), 0)
+        self.assertEqual(new_records[0]["code"], "104")
 
     @patch("location.models.Location.objects.bulk_create")
     def test_bulk_create_locations(self, mock_bulk_create):
