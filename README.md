@@ -44,8 +44,14 @@ Default configuration is defined in `msr_etl/apps.py`:
   "auth_basic_username": "",
   "auth_basic_password": "",
   "auth_bearer_token": "",
+  "source_url": "",
   "source_headers": {},
   "source_batch_size": 50,
+  "source_timeout_seconds": 300,
+  "source_retry_total": 3,
+  "source_retry_backoff_factor": 1.0,
+  "source_verify_ssl": true,
+  "source_ca_bundle_path": "",
   "sink_model_lookup_field": "json_ext__external_id",
   "sink_update_existing": true,
   "gql_query_msr_etl_rule_perms": ["953001"],
@@ -58,6 +64,17 @@ Supported authentication modes for the UBR API are:
 - `noauth`
 - `basic`
 - `bearer`
+
+Source transport settings:
+
+- `source_url`: optional base URL override (for example `https://malawiubr.org/api/v2`).
+- `source_timeout_seconds`: request timeout for each pull call.
+- `source_retry_total`: total retry count for transient HTTP/network failures.
+- `source_retry_backoff_factor`: exponential retry backoff factor.
+- `source_verify_ssl`: keep `true` in production to validate server certificates.
+- `source_ca_bundle_path`: optional path to a custom CA bundle file for environments using private/self-signed CA chains.
+
+For certificate chain issues like `CERTIFICATE_VERIFY_FAILED`, keep `source_verify_ssl=true` and set `source_ca_bundle_path` to the trusted CA chain used by the remote UBR server.
 
 ## GraphQL API
 
