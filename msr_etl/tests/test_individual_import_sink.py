@@ -36,6 +36,40 @@ class TestIndividualImportSink(TestCase):
         mock_get_workflows.assert_any_call(IMPORT_NEW_INDIVIDUALS, WORKFLOW_GROUP)
         mock_get_workflows.assert_any_call(UPDATE_EXISTING_INDIVIDUALS, WORKFLOW_GROUP)
 
+    @patch('msr_etl.sinks.individual_import_sink.IndividualImportService')
+    @patch('msr_etl.sinks.individual_import_sink.WorkflowService.get_workflows')
+    def test_init_adapts_user_without_login_name(self, mock_get_workflows, mock_import_service):
+        class TechnicalUserWrapper:
+            username = 'Yutaka'
+
+            def __getattr__(self, name):
+                if name == 'login_name':
+                    raise AttributeError('User has no attribute login_name')
+                raise AttributeError(name)
+
+        mock_get_workflows.side_effect = mock_get_workflow
+
+        IndividualImportSink(TechnicalUserWrapper())
+
+        service_user = mock_import_service.call_args[0][0]
+        self.assertEqual(service_user.login_name, 'Yutaka')
+        self.assertEqual(service_user.username, 'Yutaka')
+
+    @patch('msr_etl.sinks.individual_import_sink.IndividualImportService')
+    @patch('msr_etl.sinks.individual_import_sink.WorkflowService.get_workflows')
+    def test_init_keeps_existing_login_name(self, mock_get_workflows, mock_import_service):
+        class InteractiveUserWrapper:
+            login_name = 'admin'
+            username = 'Yutaka'
+
+        mock_get_workflows.side_effect = mock_get_workflow
+
+        IndividualImportSink(InteractiveUserWrapper())
+
+        service_user = mock_import_service.call_args[0][0]
+        self.assertEqual(service_user.login_name, 'admin')
+        self.assertEqual(service_user.username, 'Yutaka')
+
     @patch('msr_etl.sinks.individual_import_sink.WorkflowService.get_workflows')
     def test_init_no_workflow_found(self, mock_get_workflows):
         mock_get_workflows.return_value = {

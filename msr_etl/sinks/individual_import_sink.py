@@ -15,11 +15,28 @@ WORKFLOW_GROUP = "individual"
 GROUP_AGGREGATION_COLUMN = None
 
 
+def ensure_import_user_login_name(user: User):
+    try:
+        login_name = getattr(user, 'login_name')
+    except AttributeError:
+        login_name = None
+
+    if login_name:
+        return user
+
+    username = getattr(user, 'username', None)
+    if not username:
+        raise AttributeError('User has no attribute login_name or username')
+
+    setattr(user, 'login_name', username)
+    return user
+
+
 class IndividualImportSink(DataSink):
 
     def __init__(self, user: User):
         super().__init__()
-        self.service = IndividualImportService(user)
+        self.service = IndividualImportService(ensure_import_user_login_name(user))
         self.import_new_workflow = self.get_workflow(IMPORT_NEW_INDIVIDUALS)
         self.update_existing_workflow = self.get_workflow(UPDATE_EXISTING_INDIVIDUALS)
 
