@@ -1,8 +1,8 @@
 from django.test import TestCase
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from msr_etl.sinks.individual_import_sink import IndividualImportSink, IMPORT_NEW_INDIVIDUALS, UPDATE_EXISTING_INDIVIDUALS, WORKFLOW_GROUP
 from core.test_helpers import LogInHelper
-from individual.models import Individual
+from individual.models import Individual, IndividualDataSourceUpload
 from django.core.files.uploadedfile import InMemoryUploadedFile
 from msr_etl.apps import MsrEtlConfig
 
@@ -137,6 +137,34 @@ class TestIndividualImportSink(TestCase):
         existing_content = existing_update_file.file.read().decode('utf-8')
         expected_existing_csv = f'external_id,name,age,ID\r\n123,John Doe,30,{self.individual.id}\r\n'
         self.assertEqual(existing_content, expected_existing_csv)
+
+    @patch('msr_etl.sinks.individual_import_sink.IndividualDataSourceUpload.objects')
+    @patch('msr_etl.sinks.individual_import_sink.IndividualImportService.import_individuals')
+    @patch('msr_etl.sinks.individual_import_sink.WorkflowService.get_workflows')
+    def test_push_raises_when_import_workflow_upload_failed(
+            self,
+            mock_get_workflows,
+            mock_import_individuals,
+            mock_upload_objects,
+    ):
+        mock_get_workflows.side_effect = mock_get_workflow
+        mock_import_individuals.return_value = {
+            'success': True,
+            'data': {'upload_uuid': '019f222d-5a49-72ac-b74d-0b9e3822b273'},
+        }
+        failed_upload = MagicMock(
+            status=IndividualDataSourceUpload.Status.FAIL,
+            error={'workflow': 'Uploaded individuals contains invalid columns'},
+        )
+        mock_upload_objects.filter.return_value.only.return_value.first.return_value = failed_upload
+
+        sink = IndividualImportSink(self.user)
+
+        with self.assertRaises(IndividualImportSink.Error) as context:
+            sink.push([{'external_id': 456, 'name': 'Jane Smith', 'age': 25}])
+
+        self.assertIn('Individual import workflow failed', str(context.exception))
+        self.assertIn('invalid columns', str(context.exception))
 
     @patch('msr_etl.sinks.individual_import_sink.IndividualImportService.import_individuals')
     @patch('msr_etl.sinks.individual_import_sink.WorkflowService.get_workflows')

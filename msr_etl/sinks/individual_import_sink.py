@@ -2,7 +2,7 @@ import logging
 from msr_etl.sinks import DataSink
 from msr_etl.utils import data_to_file
 from core.models import User
-from individual.models import Individual
+from individual.models import Individual, IndividualDataSourceUpload
 from individual.services import IndividualImportService
 from workflow.services import WorkflowService
 from msr_etl.apps import MsrEtlConfig
@@ -61,6 +61,7 @@ class IndividualImportSink(DataSink):
         result_new = self.service.import_individuals(
             import_file, self.import_new_workflow, GROUP_AGGREGATION_COLUMN
         )
+        self._raise_if_upload_failed(result_new, 'import')
         logger.debug(f"Imported {len(new_records)} new records with {result_new}")
 
     def _update_existing_records(self, existing_records, batch_identifier):
@@ -68,7 +69,24 @@ class IndividualImportSink(DataSink):
         result_existing = self.service.import_individuals(
             update_file, self.update_existing_workflow, GROUP_AGGREGATION_COLUMN
         )
+        self._raise_if_upload_failed(result_existing, 'update')
         logger.debug(f"Updated {len(existing_records)} existing records with {result_existing}")
+
+    def _raise_if_upload_failed(self, result: dict, action: str):
+        upload_uuid = (result or {}).get('data', {}).get('upload_uuid')
+        if not upload_uuid:
+            return
+
+        upload = (
+            IndividualDataSourceUpload.objects
+            .filter(uuid=upload_uuid)
+            .only('status', 'error')
+            .first()
+        )
+        if not upload or upload.status != IndividualDataSourceUpload.Status.FAIL:
+            return
+
+        raise self.Error(f"Individual {action} workflow failed: {upload.error}")
 
     def _split_existing_and_new(self, data: list[dict]) -> tuple[list[dict], list[dict]]:
         model_lookup_field = MsrEtlConfig.sink_model_lookup_field
