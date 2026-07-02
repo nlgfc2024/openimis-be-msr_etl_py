@@ -12,6 +12,11 @@ DEFAULT_CONFIG = {
     "source_url": "",
     "source_headers": {},
     "source_batch_size": 50,
+    "source_timeout_seconds": 300,
+    "source_retry_total": 3,
+    "source_retry_backoff_factor": 1.0,
+    "source_verify_ssl": True,
+    "source_ca_bundle_path": "",
 
     "adapter_first_name_field": "firstName",
     "adapter_last_name_field": "lastName",
@@ -40,6 +45,11 @@ class MsrEtlConfig(AppConfig):
     source_url = None
     source_headers = None
     source_batch_size = None
+    source_timeout_seconds = None
+    source_retry_total = None
+    source_retry_backoff_factor = None
+    source_verify_ssl = None
+    source_ca_bundle_path = None
 
     adapter_first_name_field = None
     adapter_last_name_field = None
