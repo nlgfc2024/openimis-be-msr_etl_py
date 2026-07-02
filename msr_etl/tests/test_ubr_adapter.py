@@ -156,7 +156,7 @@ class UBRLocationAdapterTestCase(TestCase):
         }
 
         self.mocked_ta_data = {
-            "data_type": "W",
+            "data_type": "T",
             "data": [
                 {"geo_location_code": "10101", "geo_location_name": "Kameme", "parent_geo_location_code": "101"},
                 {"geo_location_code": "10201", "geo_location_name": "Karonga TA1", "parent_geo_location_code": "102"},
@@ -166,33 +166,26 @@ class UBRLocationAdapterTestCase(TestCase):
         self.mocked_village_data = {
             "data_type": "V",
             "data": [
-                {"geo_location_code": "1010101", "geo_location_name": "Mweniyanga II", "parent_geo_location_code": "10101"},
-                {"geo_location_code": "1020101", "geo_location_name": "Karonga Village 1", "parent_geo_location_code": "10201"},
+                {"geo_location_code": "101010101", "geo_location_name": "Mweniyanga II", "parent_geo_location_code": "1010101"},
+                {"geo_location_code": "102010101", "geo_location_name": "Karonga Village 1", "parent_geo_location_code": "1020101"},
             ],
         }
 
-    @patch("location.models.Location.objects.get")
-    def test_transform_districts(self, mock_get):
-        # Mock the database query for regions
-        mock_get.side_effect = [
-            MagicMock(code="1", name="Northern", type="R"),  # Region for district 101
-            MagicMock(code="1", name="Northern", type="R"),  # Region for district 102
-        ]
-
+    def test_transform_districts(self):
         transformed_data = self.adapter.transform(self.mocked_district_data)
 
         self.assertEqual(len(transformed_data), 2)
         self.assertEqual(transformed_data[0]["code"], "101")
         self.assertEqual(transformed_data[0]["name"], "Chitipa")
-        self.assertEqual(transformed_data[0]["type"], "D")
-        self.assertEqual(transformed_data[0]["parent"].code, "1")
+        self.assertEqual(transformed_data[0]["type"], "R")
+        self.assertIsNone(transformed_data[0]["parent"])
 
     @patch("location.models.Location.objects.get")
     def test_transform_tas(self, mock_get):
-        # Mock the database query for districts
+        # Mock the database query for district-as-region parents
         mock_get.side_effect = [
-            MagicMock(code="101", name="Chitipa", type="D"),  # District for TA 10101
-            MagicMock(code="102", name="Karonga", type="D"),  # District for TA 10201
+            MagicMock(code="101", name="Chitipa", type="R"),
+            MagicMock(code="102", name="Karonga", type="R"),
         ]
 
         transformed_data = self.adapter.transform(self.mocked_ta_data)
@@ -200,24 +193,24 @@ class UBRLocationAdapterTestCase(TestCase):
         self.assertEqual(len(transformed_data), 2)
         self.assertEqual(transformed_data[0]["code"], "10101")
         self.assertEqual(transformed_data[0]["name"], "Kameme")
-        self.assertEqual(transformed_data[0]["type"], "W")
+        self.assertEqual(transformed_data[0]["type"], "D")
         self.assertEqual(transformed_data[0]["parent"].code, "101")
 
     @patch("location.models.Location.objects.get")
     def test_transform_villages(self, mock_get):
-        # Mock the database query for TAs
+        # Mock the database query for GVHs mapped to wards
         mock_get.side_effect = [
-            MagicMock(code="10101", name="Kameme", type="W"),  # TA for Village 1010101
-            MagicMock(code="10201", name="Karonga TA1", type="W"),  # TA for Village 1020101
+            MagicMock(code="1010101", name="GVH A", type="W"),
+            MagicMock(code="1020101", name="GVH C", type="W"),
         ]
 
         transformed_data = self.adapter.transform(self.mocked_village_data)
 
         self.assertEqual(len(transformed_data), 2)
-        self.assertEqual(transformed_data[0]["code"], "1010101")
+        self.assertEqual(transformed_data[0]["code"], "101010101")
         self.assertEqual(transformed_data[0]["name"], "Mweniyanga II")
         self.assertEqual(transformed_data[0]["type"], "V")
-        self.assertEqual(transformed_data[0]["parent"].code, "10101")
+        self.assertEqual(transformed_data[0]["parent"].code, "1010101")
 
     def test_transform_no_data(self):
         empty_data = {"data_type": "D", "data": []}
