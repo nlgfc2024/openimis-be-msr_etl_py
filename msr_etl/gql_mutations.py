@@ -17,7 +17,7 @@ from msr_etl.apps import MsrEtlConfig
 from core.gql.gql_mutations.base_mutation import BaseMutation
 from core.schema import OpenIMISMutation
 from msr_etl.sinks import IndividualImportSink, LocationImportSink
-from msr_etl.sources import UBRLocationSource
+from msr_etl.tasks.sync_job import register_ubr_location_initial_pull_job
 
 
 class MsrEtlServiceMutation(BaseMutation):
@@ -152,7 +152,6 @@ class SaveMsrUbrLocationsMutation(BaseMutation):
             adapter = UBRLocationAdapter()
             sink = LocationImportSink(user)
 
-            UBRLocationSource.ensure_regions_exist()
             for batch in location_batches:
                 normalized_batch = cls._normalize_location_batch(batch)
                 transformed_locations = adapter.transform(normalized_batch)
@@ -176,3 +175,31 @@ class SaveMsrUbrLocationsMutation(BaseMutation):
         if type(user) is AnonymousUser or not user.id or not user.has_perms(
                 MsrEtlConfig.gql_mutation_execute_msr_etl_rule_perms):
             raise ValidationError("mutation.authentication_required")
+
+
+class ScheduleMsrUbrLocationInitialPullMutation(BaseMutation):
+    """Registers a one-off background job that performs a full UBR location pull."""
+
+    _mutation_class = "ScheduleMsrUbrLocationInitialPullMutation"
+    _mutation_module = "msr_etl"
+
+    class Input(OpenIMISMutation.Input):
+        request_id = graphene.String(required=True)
+
+    @classmethod
+    def _validate_mutation(cls, user, **data):
+        if type(user) is AnonymousUser or not user.id or not user.has_perms(
+                MsrEtlConfig.gql_mutation_execute_msr_etl_rule_perms):
+            raise ValidationError("mutation.authentication_required")
+
+    @classmethod
+    def _mutate(cls, user, **data):
+        try:
+            request_id = data.get("request_id")
+            register_ubr_location_initial_pull_job(user.id, request_id=request_id)
+            return None
+        except Exception as exc:
+            return [{
+                'message': "msr_etl.mutation.failed_to_schedule_location_initial_pull",
+                'detail': str(exc),
+            }]
