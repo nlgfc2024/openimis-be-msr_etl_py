@@ -197,6 +197,23 @@ class UBRIndividualSourceTestCase(TestCase):
         self.assertEqual(len(pulled_data), 1)
         self.assertTrue(identifiers[0].startswith("batch_101_10101_"))
 
+    def test_fetch_households_ssl_error_has_actionable_message(self):
+        source = UBRIndividualSource(get_auth_provider('noauth'))
+        session = MagicMock()
+        session.post.side_effect = requests.exceptions.SSLError("self-signed certificate in certificate chain")
+
+        with self.assertRaisesRegex(
+            source.Error,
+            "source_ca_bundle_path.*source_verify_ssl",
+        ):
+            source.fetch_households(
+                session=session,
+                url=self.url,
+                headers=self.headers,
+                district_code="101",
+                ta_code="10101",
+            )
+
 
 class UBRLocationSourceTestCase(TestCase):
 
@@ -257,6 +274,25 @@ class UBRLocationSourceTestCase(TestCase):
             },
         ]
 
+        cls.mocked_gvhs_response = [
+            {
+                "error_occurred": False,
+                "total_records": 2,
+                "geo_locations": [
+                    {"geo_location_code": "1010101", "geo_location_name": "GVH A", "parent_geo_location_code": "10101", "geo_location_type_id": 4, "geo_location_type_name": "GROUP_VILLAGE_HEAD"},
+                    {"geo_location_code": "1010102", "geo_location_name": "GVH B", "parent_geo_location_code": "10101", "geo_location_type_id": 4, "geo_location_type_name": "GROUP_VILLAGE_HEAD"},
+                ],
+            },
+            {
+                "error_occurred": False,
+                "total_records": 2,
+                "geo_locations": [
+                    {"geo_location_code": "1020101", "geo_location_name": "GVH C", "parent_geo_location_code": "10201", "geo_location_type_id": 4, "geo_location_type_name": "GROUP_VILLAGE_HEAD"},
+                    {"geo_location_code": "1020102", "geo_location_name": "GVH D", "parent_geo_location_code": "10201", "geo_location_type_id": 4, "geo_location_type_name": "GROUP_VILLAGE_HEAD"},
+                ],
+            },
+        ]
+
     @patch("requests.Session.post")
     def test_fetch_geo_locations_from_api(self, mock_post):
         # Test districts
@@ -286,41 +322,16 @@ class UBRLocationSourceTestCase(TestCase):
         self.assertEqual(villages[0]["geo_location_code"], "101010101")
         self.assertEqual(villages[1]["geo_location_code"], "101010102")
 
-    @patch("location.models.Location.objects.get_or_create")
-    def test_ensure_regions_exist(self, mock_get_or_create):
-        mock_get_or_create.return_value = (MagicMock(), True)
-
-        UBRLocationSource.ensure_regions_exist()
-
-        self.assertEqual(mock_get_or_create.call_count, 3)
-        mock_get_or_create.assert_any_call(
-            code="1",
-            type="R",
-            defaults={"name": "Northern"},
-        )
-        mock_get_or_create.assert_any_call(
-            code="2",
-            type="R",
-            defaults={"name": "Central"},
-        )
-        mock_get_or_create.assert_any_call(
-            code="3",
-            type="R",
-            defaults={"name": "Southern"},
-        )
-
     @patch("requests.Session.post")
-    @patch("location.models.Location.objects.filter")
-    def test_pull(self, mock_location_filter, mock_post):
-        # Mock the database query for districts
-        mock_location_filter.return_value.values_list.return_value = ["101", "102"]
-
+    def test_pull(self, mock_post):
         # Mock the API responses for districts, TAs, and villages
         mock_post.side_effect = [
             MagicMock(ok=True, json=MagicMock(return_value=self.mocked_districts_response)),  # Districts
             MagicMock(ok=True, json=MagicMock(return_value=self.mocked_tas_response[0])),  # TAs for District 101
+            MagicMock(ok=True, json=MagicMock(return_value=self.mocked_gvhs_response[0])),  # GVHs for District 101
             MagicMock(ok=True, json=MagicMock(return_value=self.mocked_villages_response[0])),  # Villages for District 101
             MagicMock(ok=True, json=MagicMock(return_value=self.mocked_tas_response[1])),  # TAs for District 102
+            MagicMock(ok=True, json=MagicMock(return_value=self.mocked_gvhs_response[1])),  # GVHs for District 102
             MagicMock(ok=True, json=MagicMock(return_value=self.mocked_villages_response[1])),  # Villages for District 102
         ]
 
@@ -329,16 +340,20 @@ class UBRLocationSourceTestCase(TestCase):
         results = list(source.pull())
 
         # Assertions
-        self.assertEqual(len(results), 5)  # 1 for districts, 2 for TAs, 2 for villages
+        self.assertEqual(len(results), 7)  # 1 for districts, 2 for TAs, 2 for GVHs, 2 for villages
         self.assertEqual(results[0][0]["data_type"], "D")
-        self.assertEqual(results[1][0]["data_type"], "W")
-        self.assertEqual(results[2][0]["data_type"], "V")
-        self.assertEqual(results[3][0]["data_type"], "W")
-        self.assertEqual(results[4][0]["data_type"], "V")
+        self.assertEqual(results[1][0]["data_type"], "T")
+        self.assertEqual(results[2][0]["data_type"], "G")
+        self.assertEqual(results[3][0]["data_type"], "V")
+        self.assertEqual(results[4][0]["data_type"], "T")
+        self.assertEqual(results[5][0]["data_type"], "G")
+        self.assertEqual(results[6][0]["data_type"], "V")
 
         # Check the number of records in each result
         self.assertEqual(len(results[0][0]["data"]), 2)  # Districts
         self.assertEqual(len(results[1][0]["data"]), 2)  # TAs for District 101
-        self.assertEqual(len(results[2][0]["data"]), 2)  # Villages for District 101
-        self.assertEqual(len(results[3][0]["data"]), 2)  # TAs for District 102
-        self.assertEqual(len(results[4][0]["data"]), 2)  # Villages for District 102
+        self.assertEqual(len(results[2][0]["data"]), 2)  # GVHs for District 101
+        self.assertEqual(len(results[3][0]["data"]), 2)  # Villages for District 101
+        self.assertEqual(len(results[4][0]["data"]), 2)  # TAs for District 102
+        self.assertEqual(len(results[5][0]["data"]), 2)  # GVHs for District 102
+        self.assertEqual(len(results[6][0]["data"]), 2)  # Villages for District 102
