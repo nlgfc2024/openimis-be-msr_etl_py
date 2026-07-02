@@ -9,6 +9,7 @@ from msr_etl.gql_queries import (
     MsrUbrLocationsGQLType,
 )
 from msr_etl.gql_mutations import (
+    ExecuteMsrUbrIndividualsImportMutation,
     MsrEtlServiceMutation,
     SaveMsrUbrIndividualsMutation,
     SaveMsrUbrLocationsMutation,
@@ -155,5 +156,8 @@ class Query(graphene.ObjectType):
 
 class Mutation(graphene.ObjectType):
     execute_msr_etl_service = MsrEtlServiceMutation.Field()
+    execute_msr_ubr_individuals_import = (
+        ExecuteMsrUbrIndividualsImportMutation.Field()
+    )
     save_msr_ubr_individuals = SaveMsrUbrIndividualsMutation.Field()
     save_msr_ubr_locations = SaveMsrUbrLocationsMutation.Field()

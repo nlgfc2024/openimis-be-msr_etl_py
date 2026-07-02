@@ -17,6 +17,7 @@ from msr_etl.apps import MsrEtlConfig
 from core.gql.gql_mutations.base_mutation import BaseMutation
 from core.schema import OpenIMISMutation
 from msr_etl.sinks import IndividualImportSink, LocationImportSink
+from msr_etl.services import UBRIndividualService
 from msr_etl.sources import UBRLocationSource
 
 
@@ -91,6 +92,64 @@ class MsrEtlServiceMutation(BaseMutation):
             for key, value in data.items()
             if value is not None and key in supported_params
         }
+
+
+class ExecuteMsrUbrIndividualsImportMutation(BaseMutation):
+    """
+    Mutation to fetch filtered UBR household records and submit them directly
+    into the openIMIS Individual import workflow.
+    """
+    _mutation_class = "ExecuteMsrUbrIndividualsImportMutation"
+    _mutation_module = "msr_etl"
+
+    class Input(OpenIMISMutation.Input):
+        district = graphene.String(required=False)
+        ta = graphene.String(required=False)
+        village = graphene.String(required=False)
+        lower_percentile_category = graphene.Int(required=False)
+        upper_percentile_category = graphene.Int(required=False)
+        wealth_quintiles = graphene.List(graphene.Int, required=False)
+        classification = graphene.List(graphene.Int, required=False)
+        gender = graphene.String(required=False)
+        minAge = graphene.Int(required=False)
+        maxAge = graphene.Int(required=False)
+        has_labour = graphene.Boolean(required=False)
+        labour_constrained = graphene.Boolean(required=False)
+        excluded_programme_codes = graphene.List(graphene.String, required=False)
+        household_head_gender = graphene.Int(required=False)
+
+    @classmethod
+    def _validate_mutation(cls, user, **data):
+        if type(user) is AnonymousUser or not user.id or not user.has_perms(
+                MsrEtlConfig.gql_mutation_execute_msr_etl_rule_perms):
+            raise ValidationError("mutation.authentication_required")
+
+    @classmethod
+    def _mutate(cls, user, **data):
+        try:
+            data.pop('client_mutation_id', None)
+            data.pop('client_mutation_label', None)
+            service_kwargs = MsrEtlServiceMutation._get_supported_service_kwargs(
+                UBRIndividualService,
+                data,
+            )
+            result = UBRIndividualService(user, **service_kwargs).execute()
+
+            if result['success']:
+                return None
+
+            return [{
+                'message': result.get(
+                    'message',
+                    "msr_etl.mutation.failed_to_execute_ubr_individuals_import",
+                ),
+                'detail': result.get('detail'),
+            }]
+        except Exception as exc:
+            return [{
+                'message': "msr_etl.mutation.failed_to_execute_ubr_individuals_import",
+                'detail': str(exc),
+            }]
 
 
 class SaveMsrUbrIndividualsMutation(BaseMutation):
