@@ -10,6 +10,7 @@ from msr_etl.gql_queries import (
     MsrUbrLocationInitialPullStatusGQLType,
 )
 from msr_etl.gql_mutations import (
+    ExecuteMsrUbrIndividualsImportMutation,
     MsrEtlServiceMutation,
     SaveMsrUbrIndividualsMutation,
     SaveMsrUbrLocationsMutation,
@@ -43,6 +44,10 @@ class Query(graphene.ObjectType):
         gender=graphene.Argument(graphene.String, required=False),
         minAge=graphene.Argument(graphene.Int, required=False),
         maxAge=graphene.Argument(graphene.Int, required=False),
+        has_labour=graphene.Argument(graphene.Boolean, required=False),
+        labour_constrained=graphene.Argument(graphene.Boolean, required=False),
+        excluded_programme_codes=graphene.Argument(graphene.List(graphene.String), required=False),
+        household_head_gender=graphene.Argument(graphene.Int, required=False),
     )
 
     msr_ubr_locations = graphene.Field(
@@ -98,6 +103,10 @@ class Query(graphene.ObjectType):
         gender = kwargs.get("gender")
         min_age = kwargs.get("minAge")
         max_age = kwargs.get("maxAge")
+        has_labour = kwargs.get("has_labour")
+        labour_constrained = kwargs.get("labour_constrained")
+        excluded_programme_codes = kwargs.get("excluded_programme_codes")
+        household_head_gender = kwargs.get("household_head_gender")
 
         if lower_percentile_category is not None or upper_percentile_category is not None:
             lower = 0 if lower_percentile_category is None else lower_percentile_category
@@ -116,6 +125,10 @@ class Query(graphene.ObjectType):
             gender=gender,
             min_age=min_age,
             max_age=max_age,
+            has_labour=has_labour,
+            labour_constrained=labour_constrained,
+            excluded_programme_codes=excluded_programme_codes,
+            household_head_gender=household_head_gender,
         )
         individuals = source.fetch()
         return MsrUbrIndividualsGQLType(
@@ -171,6 +184,9 @@ class Query(graphene.ObjectType):
 
 class Mutation(graphene.ObjectType):
     execute_msr_etl_service = MsrEtlServiceMutation.Field()
+    execute_msr_ubr_individuals_import = (
+        ExecuteMsrUbrIndividualsImportMutation.Field()
+    )
     save_msr_ubr_individuals = SaveMsrUbrIndividualsMutation.Field()
     save_msr_ubr_locations = SaveMsrUbrLocationsMutation.Field()
     schedule_msr_ubr_location_initial_pull = ScheduleMsrUbrLocationInitialPullMutation.Field()

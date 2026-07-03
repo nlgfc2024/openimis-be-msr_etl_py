@@ -19,6 +19,10 @@ class UBRIndividualService(MsrETLService):
                  gender: str = None,
                  minAge: int = None,
                  maxAge: int = None,
+                 has_labour: bool = None,
+                 labour_constrained: bool = None,
+                 excluded_programme_codes: list = None,
+                 household_head_gender: int = None,
                  source: DataSource = None,
                  adapter: DataAdapter = None,
                  sink: DataSink = None):
@@ -40,6 +44,10 @@ class UBRIndividualService(MsrETLService):
                 gender=gender,
                 min_age=minAge,
                 max_age=maxAge,
+                has_labour=has_labour,
+                labour_constrained=labour_constrained,
+                excluded_programme_codes=excluded_programme_codes,
+                household_head_gender=household_head_gender,
             ),
             adapter=adapter or UBRIndividualAdapter(),
             sink=sink or IndividualImportSink(user)
