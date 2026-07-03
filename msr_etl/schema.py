@@ -7,13 +7,17 @@ from msr_etl.gql_queries import (
     MsrUbrIndividualsGQLType,
     MsrUbrLocationBatchGQLType,
     MsrUbrLocationsGQLType,
+    MsrUbrLocationInitialPullStatusGQLType,
 )
 from msr_etl.gql_mutations import (
+    ExecuteMsrUbrIndividualsImportMutation,
     MsrEtlServiceMutation,
     SaveMsrUbrIndividualsMutation,
     SaveMsrUbrLocationsMutation,
+    ScheduleMsrUbrLocationInitialPullMutation,
 )
 from msr_etl.sources import UBRIndividualSource, UBRLocationSource
+from msr_etl.tasks.sync_job import get_ubr_location_initial_pull_status
 from msr_etl.utils import (
     get_class_by_name,
     get_classes_in_module,
@@ -40,13 +44,23 @@ class Query(graphene.ObjectType):
         gender=graphene.Argument(graphene.String, required=False),
         minAge=graphene.Argument(graphene.Int, required=False),
         maxAge=graphene.Argument(graphene.Int, required=False),
+        has_labour=graphene.Argument(graphene.Boolean, required=False),
+        labour_constrained=graphene.Argument(graphene.Boolean, required=False),
+        excluded_programme_codes=graphene.Argument(graphene.List(graphene.String), required=False),
+        household_head_gender=graphene.Argument(graphene.Int, required=False),
     )
 
     msr_ubr_locations = graphene.Field(
         MsrUbrLocationsGQLType,
         district=graphene.Argument(graphene.String, required=False),
         ta=graphene.Argument(graphene.String, required=False),
+        gvh=graphene.Argument(graphene.String, required=False),
         village=graphene.Argument(graphene.String, required=False),
+    )
+
+    msr_ubr_location_initial_pull_status = graphene.Field(
+        MsrUbrLocationInitialPullStatusGQLType,
+        request_id=graphene.Argument(graphene.String, required=True),
     )
 
     def _resolve_etl_services(parent, info, **kwargs):
@@ -89,6 +103,10 @@ class Query(graphene.ObjectType):
         gender = kwargs.get("gender")
         min_age = kwargs.get("minAge")
         max_age = kwargs.get("maxAge")
+        has_labour = kwargs.get("has_labour")
+        labour_constrained = kwargs.get("labour_constrained")
+        excluded_programme_codes = kwargs.get("excluded_programme_codes")
+        household_head_gender = kwargs.get("household_head_gender")
 
         if lower_percentile_category is not None or upper_percentile_category is not None:
             lower = 0 if lower_percentile_category is None else lower_percentile_category
@@ -107,6 +125,10 @@ class Query(graphene.ObjectType):
             gender=gender,
             min_age=min_age,
             max_age=max_age,
+            has_labour=has_labour,
+            labour_constrained=labour_constrained,
+            excluded_programme_codes=excluded_programme_codes,
+            household_head_gender=household_head_gender,
         )
         individuals = source.fetch()
         return MsrUbrIndividualsGQLType(
@@ -125,6 +147,7 @@ class Query(graphene.ObjectType):
         raw_batches = source.fetch(
             district=kwargs.get("district"),
             ta=kwargs.get("ta"),
+            gvh=kwargs.get("gvh"),
             village=kwargs.get("village"),
         )
         batches = [
@@ -140,8 +163,30 @@ class Query(graphene.ObjectType):
             count=sum(batch.count for batch in batches),
         )
 
+    def resolve_msr_ubr_location_initial_pull_status(parent, info, **kwargs):
+        if not info.context.user.has_perms(MsrEtlConfig.gql_query_msr_etl_rule_perms):
+            raise PermissionError("Unauthorized")
+
+        request_id = kwargs.get("request_id")
+        status_payload = get_ubr_location_initial_pull_status(request_id)
+        if not status_payload:
+            return None
+
+        return MsrUbrLocationInitialPullStatusGQLType(
+            request_id=status_payload.get("request_id"),
+            status=status_payload.get("status"),
+            message=status_payload.get("message"),
+            started_at=status_payload.get("started_at"),
+            finished_at=status_payload.get("finished_at"),
+            updated_at=status_payload.get("updated_at"),
+        )
+
 
 class Mutation(graphene.ObjectType):
     execute_msr_etl_service = MsrEtlServiceMutation.Field()
+    execute_msr_ubr_individuals_import = (
+        ExecuteMsrUbrIndividualsImportMutation.Field()
+    )
     save_msr_ubr_individuals = SaveMsrUbrIndividualsMutation.Field()
     save_msr_ubr_locations = SaveMsrUbrLocationsMutation.Field()
+    schedule_msr_ubr_location_initial_pull = ScheduleMsrUbrLocationInitialPullMutation.Field()

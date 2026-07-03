@@ -12,6 +12,13 @@ DEFAULT_CONFIG = {
     "source_url": "",
     "source_headers": {},
     "source_batch_size": 50,
+    "source_timeout_seconds": 300,
+    "source_retry_total": 3,
+    "source_retry_backoff_factor": 1.0,
+    "source_verify_ssl": True,
+    "source_ca_bundle_path": "",
+
+    "ubr_programme_parameter_id": 2,
 
     "adapter_first_name_field": "firstName",
     "adapter_last_name_field": "lastName",
@@ -21,6 +28,7 @@ DEFAULT_CONFIG = {
 
     "sink_model_lookup_field": "json_ext__external_id",
     "sink_update_existing": True,
+    "sink_import_username": "",
 
     "gql_query_msr_etl_rule_perms": ["953001"],
     "gql_mutation_execute_msr_etl_rule_perms": ["953002"],
@@ -40,6 +48,13 @@ class MsrEtlConfig(AppConfig):
     source_url = None
     source_headers = None
     source_batch_size = None
+    source_timeout_seconds = None
+    source_retry_total = None
+    source_retry_backoff_factor = None
+    source_verify_ssl = None
+    source_ca_bundle_path = None
+
+    ubr_programme_parameter_id = None
 
     adapter_first_name_field = None
     adapter_last_name_field = None
@@ -49,6 +64,7 @@ class MsrEtlConfig(AppConfig):
 
     sink_model_lookup_field = None
     sink_update_existing = None
+    sink_import_username = None
 
     gql_query_msr_etl_rule_perms = None
     gql_mutation_execute_msr_etl_rule_perms = None

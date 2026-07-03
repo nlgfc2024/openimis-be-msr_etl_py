@@ -1,6 +1,9 @@
 import logging
+import os
 import requests
 import time
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from msr_etl.apps import MsrEtlConfig
 from msr_etl.auth_provider import get_auth_provider
@@ -8,9 +11,126 @@ from msr_etl.auth_provider.base import AuthProvider
 from msr_etl.sources import DataSource
 from msr_etl.utils import get_timestamped_batch_identifier
 from location.models import Location
-from msr_etl.models import UBRRegion, UBRWealthQuintiles
+from msr_etl.models import UBRWealthQuintiles
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_HOUSEHOLDS_URL = "https://malawiubr.org/api/v2/get_households_data"
+_DEFAULT_GEO_LOCATIONS_URL = "https://malawiubr.org/api/v2/get_geo_locations"
+
+
+def _get_int_config(value, default):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _get_float_config(value, default):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _get_bool_config(value, default):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "y", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "n", "off"}:
+            return False
+    return default
+
+
+def _get_source_timeout_seconds():
+    return _get_int_config(MsrEtlConfig.source_timeout_seconds, 300)
+
+
+def _resolve_source_url(default_url, endpoint_path):
+    configured = str(MsrEtlConfig.source_url or "").strip()
+    if not configured:
+        return default_url
+
+    if configured.startswith("http://") or configured.startswith("https://"):
+        if configured.endswith(endpoint_path):
+            return configured
+        if configured.endswith("/"):
+            return f"{configured[:-1]}{endpoint_path}"
+        return f"{configured}{endpoint_path}"
+
+    logger.warning("Ignoring invalid msr_etl.source_url value: %s", configured)
+    return default_url
+
+
+def _get_retry_total():
+    return max(_get_int_config(MsrEtlConfig.source_retry_total, 3), 0)
+
+
+def _get_retry_backoff_factor():
+    return max(_get_float_config(MsrEtlConfig.source_retry_backoff_factor, 1.0), 0.0)
+
+
+def _get_ssl_verify_setting():
+    verify_ssl = _get_bool_config(MsrEtlConfig.source_verify_ssl, True)
+    ca_bundle_path = str(MsrEtlConfig.source_ca_bundle_path or "").strip()
+
+    if not verify_ssl:
+        logger.warning("msr_etl source_verify_ssl is disabled; TLS certificate verification is OFF")
+        return False
+
+    if ca_bundle_path:
+        if not os.path.isfile(ca_bundle_path):
+            raise DataSource.Error(
+                f"source_ca_bundle_path is configured but file was not found: '{ca_bundle_path}'"
+            )
+        return ca_bundle_path
+
+    return True
+
+
+def _create_retry_session():
+    retry_total = _get_retry_total()
+    retry = Retry(
+        total=retry_total,
+        connect=retry_total,
+        read=retry_total,
+        status=retry_total,
+        backoff_factor=_get_retry_backoff_factor(),
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=frozenset(["GET", "POST"]),
+        raise_on_status=False,
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session = requests.Session()
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
+
+def _post_with_resilience(session, url, headers, **kwargs):
+    timeout_seconds = _get_source_timeout_seconds()
+    verify = _get_ssl_verify_setting()
+    try:
+        return session.post(
+            url,
+            headers=headers,
+            timeout=timeout_seconds,
+            verify=verify,
+            **kwargs,
+        )
+    except requests.exceptions.SSLError as exc:
+        logger.exception("SSL validation failed while calling UBR endpoint %s", url)
+        raise DataSource.Error(
+            "SSL certificate verification failed while calling UBR API. "
+            "Configure msr_etl.source_ca_bundle_path with the trusted CA chain "
+            "or (only for controlled environments) set msr_etl.source_verify_ssl to false."
+        ) from exc
+    except requests.exceptions.RequestException as exc:
+        logger.exception("HTTP request to UBR endpoint failed: %s", url)
+        raise DataSource.Error(f"Failed to call UBR endpoint '{url}': {exc}") from exc
 
 
 class UBRIndividualSource(DataSource):
@@ -27,6 +147,10 @@ class UBRIndividualSource(DataSource):
         gender: str = None,
         min_age: int = None,
         max_age: int = None,
+        has_labour: bool = None,
+        labour_constrained: bool = None,
+        excluded_programme_codes: list = None,
+        household_head_gender: int = None,
     ):
         super().__init__()
 
@@ -47,6 +171,12 @@ class UBRIndividualSource(DataSource):
         self.gender = gender
         self.min_age = min_age
         self.max_age = max_age
+        self.has_labour = has_labour
+        self.labour_constrained = labour_constrained
+        self.excluded_programme_codes = [
+            str(code) for code in (excluded_programme_codes or [])
+        ]
+        self.household_head_gender = household_head_gender
 
     def pull(self):
         headers = {
@@ -54,10 +184,10 @@ class UBRIndividualSource(DataSource):
             **self.auth_provider.get_auth_header(),
         }
 
-        url = 'https://malawiubr.org/api/v2/get_households_data'
+        url = _resolve_source_url(_DEFAULT_HOUSEHOLDS_URL, "/get_households_data")
         logger.info(f"Pulling households from {url}")
 
-        session = requests.Session()
+        session = _create_retry_session()
 
         district_codes = self._get_district_codes()
 
@@ -81,8 +211,8 @@ class UBRIndividualSource(DataSource):
             **MsrEtlConfig.source_headers,
             **self.auth_provider.get_auth_header(),
         }
-        url = 'https://malawiubr.org/api/v2/get_households_data'
-        session = requests.Session()
+        url = _resolve_source_url(_DEFAULT_HOUSEHOLDS_URL, "/get_households_data")
+        session = _create_retry_session()
 
         rows = []
         for district_code in self._get_district_codes():
@@ -112,11 +242,11 @@ class UBRIndividualSource(DataSource):
             self._validate_village_code(ta_code)
             params["village_code"] = self.village
 
-        res = session.post(
+        res = _post_with_resilience(
+            session,
             url,
-            headers=headers,
+            headers,
             params=params,
-            timeout=300
         )
 
         if not res.ok:
@@ -129,7 +259,8 @@ class UBRIndividualSource(DataSource):
             logger.error(f"Error in response: {body.get('error_message')}")
             raise self.Error(f"Error in response: {body.get('error_message')}")
 
-        return body.get("targeting_data", [])
+        rows = body.get("targeting_data", [])
+        return self._apply_local_filters(rows)
 
     def _get_district_codes(self):
         if self.district:
@@ -176,6 +307,123 @@ class UBRIndividualSource(DataSource):
                 f"Village code '{self.village}' was not found under TA '{ta_code}'."
             )
 
+    def _apply_local_filters(self, rows):
+        filtered = []
+
+        for row in rows:
+            if self.has_labour is not None:
+                if self._household_has_labour(row) != self.has_labour:
+                    continue
+
+            if self.labour_constrained is not None:
+                if self._household_is_labour_constrained(row) != self.labour_constrained:
+                    continue
+
+            if self.household_head_gender is not None:
+                if not self._household_head_gender_matches(row):
+                    continue
+
+            if self.excluded_programme_codes:
+                if self._household_has_excluded_programme(row):
+                    continue
+
+            filtered.append(row)
+
+        return filtered
+
+
+    def _household_has_labour(self, row):
+        summary = row.get("household_summary") or {}
+        members_fit_for_work = summary.get("members_fit_for_work")
+
+        try:
+            return int(members_fit_for_work or 0) > 0
+        except (TypeError, ValueError):
+            members = row.get("household_members") or []
+            return any(self._as_bool(member.get("fit_for_work")) for member in members)
+
+
+    def _household_is_labour_constrained(self, row):
+        summary = row.get("household_summary") or {}
+        return self._as_bool(summary.get("labour_constrained"))
+
+
+    def _household_head_gender_matches(self, row):
+        summary = row.get("household_summary") or {}
+        household_head_gender = summary.get("household_head_gender")
+
+        if household_head_gender is None:
+            return False
+
+        return str(household_head_gender) == str(self.household_head_gender)
+
+
+    def _household_has_excluded_programme(self, row):
+        programme_parameter_id = str(
+            getattr(MsrEtlConfig, "ubr_programme_parameter_id", 2) or 2
+        )
+        excluded_codes = set(self.excluded_programme_codes)
+
+        for response in self._as_list(row.get("household_combined_responses")):
+            general_parameter = response.get("general_parameter") or {}
+            if self._general_parameter_matches_programme(
+                general_parameter,
+                programme_parameter_id,
+                excluded_codes,
+            ):
+                return True
+
+        for programme in self._as_list(row.get("household_programmes")):
+            general_parameter = programme.get("general_parameter") or programme
+            if self._general_parameter_matches_programme(
+                general_parameter,
+                programme_parameter_id,
+                excluded_codes,
+            ):
+                return True
+
+        return False
+
+
+    @staticmethod
+    def _general_parameter_matches_programme(
+        general_parameter,
+        programme_parameter_id,
+        excluded_codes,
+    ):
+        if not general_parameter:
+            return False
+
+        return (
+            str(general_parameter.get("parameter_id")) == programme_parameter_id
+            and str(general_parameter.get("parameter_code")) in excluded_codes
+        )
+
+
+    @staticmethod
+    def _as_bool(value):
+        if isinstance(value, bool):
+            return value
+
+        if value is None:
+            return False
+
+        if isinstance(value, (int, float)):
+            return value == 1
+
+        return str(value).strip().lower() in ("1", "true", "yes", "y")
+
+
+    @staticmethod
+    def _as_list(value):
+        if value is None:
+            return []
+
+        if isinstance(value, list):
+            return value
+
+        return [value]
+
 
 class UBRLocationSource(DataSource):
 
@@ -193,12 +441,10 @@ class UBRLocationSource(DataSource):
             **self.auth_provider.get_auth_header(),
         }
 
-        url = 'https://malawiubr.org/api/v2/get_geo_locations'
+        url = _resolve_source_url(_DEFAULT_GEO_LOCATIONS_URL, "/get_geo_locations")
         logger.info(f"Pulling geo locations from {url}")
 
-        session = requests.Session()
-
-        self.ensure_regions_exist()
+        session = _create_retry_session()
 
         district_rows = self.fetch_geo_locations_from_api(
             session, url, headers, {"geo_location_type_id": 1}, "districts"
@@ -206,7 +452,6 @@ class UBRLocationSource(DataSource):
 
         prefix = "batch_districts_"
         identifier = get_timestamped_batch_identifier(prefix)
-        logger.debug(f"Sending {len(district_rows)} district records to data adaptor to process")
         yield {"data_type": "D", "data": district_rows}, identifier
 
         for district in district_rows:
@@ -222,8 +467,16 @@ class UBRLocationSource(DataSource):
 
             prefix = f"batch_tas_{district_code}_"
             identifier = get_timestamped_batch_identifier(prefix)
-            logger.debug(f"Sending {len(ta_rows)} TA records to data adaptor to process")
-            yield {"data_type": "W", "data": ta_rows}, identifier
+            yield {"data_type": "T", "data": ta_rows}, identifier
+
+            logger.info(f"Fetching GVHs for district: {district_code}")
+            gvh_rows = self.fetch_geo_locations_from_api(
+                session, url, headers, {"geo_location_type_id": 4, "district_code": district_code}, "GVHs"
+            )
+
+            prefix = f"batch_gvhs_{district_code}_"
+            identifier = get_timestamped_batch_identifier(prefix)
+            yield {"data_type": "G", "data": gvh_rows}, identifier
 
             logger.info(f"Fetching Villages for district: {district_code}")
             village_rows = self.fetch_geo_locations_from_api(
@@ -232,28 +485,31 @@ class UBRLocationSource(DataSource):
 
             prefix = f"batch_villages_{district_code}_"
             identifier = get_timestamped_batch_identifier(prefix)
-            logger.debug(f"Sending {len(village_rows)} Village records to data adaptor to process")
             yield {"data_type": "V", "data": village_rows}, identifier
 
             # Add a 30-second sleep after processing each district
             logger.info(f"Sleeping for 30 seconds after processing district: {district_code}")
             time.sleep(30)
 
-    def fetch(self, district: str = None, ta: str = None, village: str = None):
+    def fetch(self, district: str = None, ta: str = None, gvh: str = None, village: str = None):
         headers = {
             **MsrEtlConfig.source_headers,
             **self.auth_provider.get_auth_header(),
         }
 
-        url = 'https://malawiubr.org/api/v2/get_geo_locations'
+        url = _resolve_source_url(_DEFAULT_GEO_LOCATIONS_URL, "/get_geo_locations")
         logger.info(f"Pulling geo locations from {url}")
 
-        session = requests.Session()
+        session = _create_retry_session()
 
-        if village and not ta:
-            ta = village[:5]
+        if village and not gvh:
+            gvh = village[:7]
+        if gvh and not ta:
+            ta = gvh[:5]
         if ta and not district:
             district = ta[:3]
+        if gvh and not district:
+            district = gvh[:3]
 
         batches = []
 
@@ -269,15 +525,27 @@ class UBRLocationSource(DataSource):
         )
         if ta:
             ta_rows = [row for row in ta_rows if row.get("geo_location_code") == ta]
-        batches.append({"data_type": "W", "data": ta_rows})
+        batches.append({"data_type": "T", "data": ta_rows})
+
+        gvh_rows = self.fetch_geo_locations_from_api(
+            session, url, headers, {"geo_location_type_id": 4, "district_code": district}, "GVHs"
+        )
+        if ta:
+            gvh_rows = [
+                row for row in gvh_rows
+                if row.get("parent_geo_location_code") == ta
+            ]
+        if gvh:
+            gvh_rows = [row for row in gvh_rows if row.get("geo_location_code") == gvh]
+        batches.append({"data_type": "G", "data": gvh_rows})
 
         village_rows = self.fetch_geo_locations_from_api(
             session, url, headers, {"geo_location_type_id": 11, "district_code": district}, "Villages"
         )
-        if ta:
+        if gvh:
             village_rows = [
                 row for row in village_rows
-                if row.get("parent_geo_location_code") == ta
+                if row.get("parent_geo_location_code") == gvh
             ]
         if village:
             village_rows = [
@@ -288,37 +556,20 @@ class UBRLocationSource(DataSource):
         return batches
 
     @staticmethod
-    def ensure_regions_exist():
-        for region in UBRRegion:
-            region_code = str(region.value)
-            region_name = region.label
-
-            region_obj, created = Location.objects.get_or_create(
-                code=region_code,
-                type="R",
-                defaults={"name": region_name},
-            )
-
-            if created:
-                logger.info(f"Created new region: {region_name} (Code: {region_code})")
-            else:
-                logger.debug(f"Region already exists: {region_name} (Code: {region_code})")
-
-    @staticmethod
     def fetch_geo_locations_from_api(session, url, headers, params, log_label):
         logger.info(f"Fetching {log_label} from {url} with params: {params}")
 
-        res = session.post(url, headers=headers, json=params, timeout=300)
+        res = _post_with_resilience(session, url, headers, json=params)
 
         if not res.ok:
             logger.error("HTTP Request failed: %s %s", res.status_code, res.reason)
-            raise Exception(f"HTTP request failed: {res.status_code}: {res.reason}")
+            raise DataSource.Error(f"HTTP request failed: {res.status_code}: {res.reason}")
 
         body = res.json()
 
         if body.get("error_occurred", False):
             logger.error(f"Error in response: {body.get('error_message')}")
-            raise Exception(f"Error in response: {body.get('error_message')}")
+            raise DataSource.Error(f"Error in response: {body.get('error_message')}")
 
         locations = body.get("geo_locations", [])
         if not locations:

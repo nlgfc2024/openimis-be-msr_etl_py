@@ -153,46 +153,59 @@ class UBRLocationAdapter(DataAdapter):
             logger.warning(f"Skipping {data_type} due to missing geo_location_code or geo_location_name")
             return None
 
-        # Determine parent info based on type
+        # Determine parent info and target openIMIS type based on UBR layer.
+        # Keep an openIMIS-compatible visible hierarchy: R -> D -> W -> V.
+        # District rows become top-level regions (R).
+        # TA rows become districts (D) under district-as-region rows.
+        # GVH rows become wards (W) under TA-as-district rows.
+        # Village rows remain villages (V) under GVH-as-ward rows.
         if data_type == "D":
-            parent_code = geo_location_code[0]
+            parent_code = None
+            parent_type = None
+            target_type = "R"
+        elif data_type == "T":
+            parent_code = parent_geo_location_code or geo_location_code[:3]
             parent_type = "R"
-        elif data_type == "W":
-            if not parent_geo_location_code:
-                logger.warning("Skipping TA due to missing parent_geo_location_code")
-                return None
-            parent_code = parent_geo_location_code
+            target_type = "D"
+        elif data_type == "G":
+            parent_code = parent_geo_location_code or geo_location_code[:5]
             parent_type = "D"
+            target_type = "W"
         elif data_type == "V":
             if not parent_geo_location_code:
                 logger.warning("Skipping Village due to missing parent_geo_location_code")
                 return None
-            parent_code = parent_geo_location_code[:5]
+            parent_code = parent_geo_location_code
             parent_type = "W"
+            target_type = "V"
         else:
             logger.warning(f"Unknown data type: {data_type}")
             return None
 
-        parent = self._get_or_cache_location(parent_code, parent_type, location_cache)
-        if not parent:
-            logger.error(f"Parent with code {parent_code} and type {parent_type} not found for {data_type} {geo_location_code}")
-            return None
+        parent = None
+        if parent_code and parent_type:
+            parent = self._get_or_cache_location(parent_code, parent_type, location_cache)
+            if not parent:
+                logger.error(
+                    f"Parent with code {parent_code} and type {parent_type} not found for {data_type} {geo_location_code}"
+                )
+                return None
 
         return {
             "code": geo_location_code,
             "name": geo_location_name,
-            "type": data_type,
+            "type": target_type,
             "parent": parent,
         }
 
     def _get_or_cache_location(self, location_code: str, location_type: str, location_cache: dict) -> Location:
-        if location_code not in location_cache:
+        cache_key = f"{location_type}:{location_code}"
+        if cache_key not in location_cache:
             try:
                 location = Location.objects.get(code=location_code, type=location_type, validity_to__isnull=True)
-                location_cache[location_code] = location
-                logger.debug(f"Cached location: {location_code} -> {location.name}")
+                location_cache[cache_key] = location
             except Location.DoesNotExist:
                 logger.error(f"Location with code {location_code} and type {location_type} not found in the database.")
                 return None
 
-        return location_cache.get(location_code)
+        return location_cache.get(cache_key)

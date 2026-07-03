@@ -1,8 +1,8 @@
 from django.test import TestCase
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from msr_etl.sinks.individual_import_sink import IndividualImportSink, IMPORT_NEW_INDIVIDUALS, UPDATE_EXISTING_INDIVIDUALS, WORKFLOW_GROUP
 from core.test_helpers import LogInHelper
-from individual.models import Individual
+from individual.models import Individual, IndividualDataSourceUpload
 from django.core.files.uploadedfile import InMemoryUploadedFile
 from msr_etl.apps import MsrEtlConfig
 
@@ -13,6 +13,7 @@ class TestIndividualImportSink(TestCase):
         self.user = LogInHelper().get_or_create_user_api()
         MsrEtlConfig.sink_model_lookup_field = 'json_ext__external_id'
         MsrEtlConfig.sink_update_existing = True
+        MsrEtlConfig.sink_import_username = ''
 
         # Create existing individual in the database
         self.individual = Individual(
@@ -35,6 +36,80 @@ class TestIndividualImportSink(TestCase):
         self.assertEqual(sink.import_new_workflow['name'], IMPORT_NEW_INDIVIDUALS)
         mock_get_workflows.assert_any_call(IMPORT_NEW_INDIVIDUALS, WORKFLOW_GROUP)
         mock_get_workflows.assert_any_call(UPDATE_EXISTING_INDIVIDUALS, WORKFLOW_GROUP)
+
+    @patch('msr_etl.sinks.individual_import_sink.IndividualImportService')
+    @patch('msr_etl.sinks.individual_import_sink.WorkflowService.get_workflows')
+    def test_init_adapts_user_without_login_name(self, mock_get_workflows, mock_import_service):
+        class TechnicalUserWrapper:
+            username = 'Yutaka'
+
+            def __getattr__(self, name):
+                if name == 'login_name':
+                    raise AttributeError('User has no attribute login_name')
+                raise AttributeError(name)
+
+        mock_get_workflows.side_effect = mock_get_workflow
+
+        IndividualImportSink(TechnicalUserWrapper())
+
+        service_user = mock_import_service.call_args[0][0]
+        self.assertEqual(service_user.login_name, 'Yutaka')
+        self.assertEqual(service_user.username, 'Yutaka')
+
+    @patch('msr_etl.sinks.individual_import_sink.IndividualImportService')
+    @patch('msr_etl.sinks.individual_import_sink.WorkflowService.get_workflows')
+    def test_init_keeps_existing_login_name(self, mock_get_workflows, mock_import_service):
+        class InteractiveUserWrapper:
+            login_name = 'admin'
+            username = 'Yutaka'
+
+        mock_get_workflows.side_effect = mock_get_workflow
+
+        IndividualImportSink(InteractiveUserWrapper())
+
+        service_user = mock_import_service.call_args[0][0]
+        self.assertEqual(service_user.login_name, 'admin')
+        self.assertEqual(service_user.username, 'Yutaka')
+
+    @patch('msr_etl.sinks.individual_import_sink.User.objects')
+    @patch('msr_etl.sinks.individual_import_sink.IndividualImportService')
+    @patch('msr_etl.sinks.individual_import_sink.WorkflowService.get_workflows')
+    def test_init_uses_configured_import_username(
+            self,
+            mock_get_workflows,
+            mock_import_service,
+            mock_user_objects,
+    ):
+        class ImportUserWrapper:
+            login_name = 'Admin'
+            username = 'Admin'
+
+        mock_get_workflows.side_effect = mock_get_workflow
+        mock_user_objects.filter.return_value.first.return_value = ImportUserWrapper()
+        MsrEtlConfig.sink_import_username = 'Admin'
+
+        IndividualImportSink(self.user)
+
+        service_user = mock_import_service.call_args[0][0]
+        mock_user_objects.filter.assert_called_once_with(username='Admin')
+        self.assertEqual(service_user.login_name, 'Admin')
+        self.assertEqual(service_user.username, 'Admin')
+
+    @patch('msr_etl.sinks.individual_import_sink.User.objects')
+    @patch('msr_etl.sinks.individual_import_sink.WorkflowService.get_workflows')
+    def test_init_raises_when_configured_import_username_missing(
+            self,
+            mock_get_workflows,
+            mock_user_objects,
+    ):
+        mock_get_workflows.side_effect = mock_get_workflow
+        mock_user_objects.filter.return_value.first.return_value = None
+        MsrEtlConfig.sink_import_username = 'MissingUser'
+
+        with self.assertRaises(IndividualImportSink.Error) as context:
+            IndividualImportSink(self.user)
+
+        self.assertIn('Configured sink_import_username not found: MissingUser', str(context.exception))
 
     @patch('msr_etl.sinks.individual_import_sink.WorkflowService.get_workflows')
     def test_init_no_workflow_found(self, mock_get_workflows):
@@ -103,6 +178,34 @@ class TestIndividualImportSink(TestCase):
         existing_content = existing_update_file.file.read().decode('utf-8')
         expected_existing_csv = f'external_id,name,age,ID\r\n123,John Doe,30,{self.individual.id}\r\n'
         self.assertEqual(existing_content, expected_existing_csv)
+
+    @patch('msr_etl.sinks.individual_import_sink.IndividualDataSourceUpload.objects')
+    @patch('msr_etl.sinks.individual_import_sink.IndividualImportService.import_individuals')
+    @patch('msr_etl.sinks.individual_import_sink.WorkflowService.get_workflows')
+    def test_push_raises_when_import_workflow_upload_failed(
+            self,
+            mock_get_workflows,
+            mock_import_individuals,
+            mock_upload_objects,
+    ):
+        mock_get_workflows.side_effect = mock_get_workflow
+        mock_import_individuals.return_value = {
+            'success': True,
+            'data': {'upload_uuid': '019f222d-5a49-72ac-b74d-0b9e3822b273'},
+        }
+        failed_upload = MagicMock(
+            status=IndividualDataSourceUpload.Status.FAIL,
+            error={'workflow': 'Uploaded individuals contains invalid columns'},
+        )
+        mock_upload_objects.filter.return_value.only.return_value.first.return_value = failed_upload
+
+        sink = IndividualImportSink(self.user)
+
+        with self.assertRaises(IndividualImportSink.Error) as context:
+            sink.push([{'external_id': 456, 'name': 'Jane Smith', 'age': 25}])
+
+        self.assertIn('Individual import workflow failed', str(context.exception))
+        self.assertIn('invalid columns', str(context.exception))
 
     @patch('msr_etl.sinks.individual_import_sink.IndividualImportService.import_individuals')
     @patch('msr_etl.sinks.individual_import_sink.WorkflowService.get_workflows')
