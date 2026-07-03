@@ -263,26 +263,28 @@ class UBRIndividualSource(DataSource):
         return self._apply_local_filters(rows)
 
     def _get_district_codes(self):
+        # Malawi hierarchy: District = Location type R, TA = type D, GVH = type W, Village = type V.
         if self.district:
             if not Location.objects.filter(
                 code=self.district,
-                type='D',
+                type='R',
                 validity_to__isnull=True,
             ).exists():
                 raise self.Error(f"District code '{self.district}' was not found.")
             return [self.district]
 
         return Location.objects.filter(
-            type='D',
+            type='R',
             validity_to__isnull=True,
         ).values_list('code', flat=True)
 
     def _get_ta_codes(self, district_code):
+        # TA = Location type D, sitting directly under a District (type R).
         if self.ta:
             if not Location.objects.filter(
                 code=self.ta,
                 parent__code=district_code,
-                type='W',
+                type='D',
                 validity_to__isnull=True,
             ).exists():
                 raise self.Error(
@@ -292,14 +294,16 @@ class UBRIndividualSource(DataSource):
 
         return Location.objects.filter(
             parent__code=district_code,
-            type='W',
+            type='D',
             validity_to__isnull=True,
         ).values_list('code', flat=True)
 
     def _validate_village_code(self, ta_code):
+        # Village (type V) sits under a GVH (type W) which sits under the TA (type D),
+        # so a village belongs to a TA via parent__parent.
         if not Location.objects.filter(
             code=self.village,
-            parent__code=ta_code,
+            parent__parent__code=ta_code,
             type='V',
             validity_to__isnull=True,
         ).exists():
