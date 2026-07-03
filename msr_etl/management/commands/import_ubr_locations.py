@@ -8,94 +8,115 @@ import pandas as pd
 
 class Command(BaseCommand):
     help = '''
-        Import Malawi locations to DB from fixture files in the following 4 levels:
-        Region, District, Catchment, Village
+        Import Malawi locations to DB from the Mthandizi geo-mapping fixture in the
+        confirmed 4-level hierarchy:
+            District (Location type R)  ->  TA (type D)  ->  GVH (type W)  ->  Village (type V)
+
+        The fixture's catchment_* columns describe micro-catchments (a separate
+        concept), not a location level, so they are intentionally ignored here.
     '''
 
     def handle(self, *args, **options):
-        start_time = datetime.now()
-
         file_path = join(dirname(__file__), "../fixtures/Mthandizi Geo mapping.xlsx")
-        df = pd.read_excel(file_path)
+        # Read every column as a string so numeric-looking codes keep their exact
+        # form (leading digits, fixed width) and stay usable as parent keys.
+        df = pd.read_excel(file_path, dtype=str)
+        # There is no explicit district code column; a district is the first 3
+        # digits of its TA code (verified 1:1 against district_name in the fixture).
+        df["district_code"] = df["traditional_authority_code"].str[:3]
 
-        region_lookup = self.import_regions()
-        self.import_districts(df, region_lookup)
+        district_lookup = self.import_districts(df)
+        ta_lookup = self.import_tas(df, district_lookup)
+        gvh_lookup = self.import_gvhs(df, ta_lookup)
+        self.import_villages(df, gvh_lookup)
 
-        district_lookup = {d.code: d for d in Location.objects.filter(
-            code__in=df["district_code"].unique(), type="D", validity_from__gt=start_time
-        )}
-        self.import_catchments(df, district_lookup)
+    def import_districts(self, df):
+        # District = top level of the hierarchy (Location type R), no parent.
+        distinct = df[["district_code", "district_name"]].dropna().drop_duplicates()
 
-        catchment_lookup = {c.code: c for c in Location.objects.filter(
-            code__in=df["catchment_code"].unique(), type="W", validity_from__gt=start_time
-        )}
-        self.import_villages(df, catchment_lookup)
-
-
-    def import_regions(self):
-        region_lookup = dict()
-        for index, name in enumerate(['Northern', 'Central', 'Southern']):
-            code = str(index+1)
-            region, _ = Location.objects.get_or_create(code=code, name=name, type='R')
-            region_lookup[code] = region
-        self.stdout.write(f"Successfully imported {len(region_lookup)} regions.")
-        return region_lookup
-
-
-    def import_districts(self, df, region_lookup):
-        df["district_code"] = df["traditional_authority_code"].astype(str).str[:3]
-        distinct_districts = df[["district_name", "district_code"]].drop_duplicates()
-
-        districts = []
-        for _, row in distinct_districts.iterrows():
-            code = row["district_code"]
-            parent = region_lookup.get(code[0])
-            if not parent:
-                self.stderr.write(f"Skipping district {row} due to missing region code {code[0]}")
-                continue
-            district = Location(name=row["district_name"], code=code, type='D', parent=parent)
-            districts.append(district)
-
+        districts = [
+            Location(code=row["district_code"], name=row["district_name"], type="R")
+            for _, row in distinct.iterrows()
+        ]
         with transaction.atomic():
             Location.objects.bulk_create(districts, ignore_conflicts=True)
 
+        lookup = self._active_lookup("R", distinct["district_code"])
         self.stdout.write(f"Successfully imported {len(districts)} districts.")
+        return lookup
 
+    def import_tas(self, df, district_lookup):
+        # TA = Location type D, sitting directly under its District.
+        distinct = df[["district_code", "traditional_authority_code", "TA"]].dropna().drop_duplicates()
 
-    def import_catchments(self, df, district_lookup):
-        df.loc[df["catchment_code"].isna(), "catchment_code"] = df["district_code"] + "xxx"
-        df.loc[df["catchment_name"].isna(), "catchment_name"] = df["district_name"] + " - No Catchment"
-        distinct_catchments = df[["district_code", "catchment_code", "catchment_name"]].drop_duplicates()
-
-        catchments = []
-        for _, row in distinct_catchments.iterrows():
-            code = row["catchment_code"]
+        tas = []
+        for _, row in distinct.iterrows():
             parent = district_lookup.get(row["district_code"])
             if not parent:
-                self.stderr.write(f"Skipping catchment {row} due to missing district {row['district_code']}")
+                self.stderr.write(
+                    f"Skipping TA {row['traditional_authority_code']} due to missing district {row['district_code']}"
+                )
                 continue
-            catchment = Location(name=row["catchment_name"], code=code, type='W', parent=parent)
-            catchments.append(catchment)
+            tas.append(Location(code=row["traditional_authority_code"], name=row["TA"], type="D", parent=parent))
 
         with transaction.atomic():
-            Location.objects.bulk_create(catchments, ignore_conflicts=True)
+            Location.objects.bulk_create(tas, ignore_conflicts=True)
 
-        self.stdout.write(f"Successfully imported {len(catchments)} catchments.")
+        lookup = self._active_lookup("D", distinct["traditional_authority_code"])
+        self.stdout.write(f"Successfully imported {len(tas)} TAs.")
+        return lookup
 
+    def import_gvhs(self, df, ta_lookup):
+        # GVH = Location type W, sitting under its TA.
+        distinct = df[["traditional_authority_code", "group_village_head_code", "GVH"]].dropna().drop_duplicates()
 
-    def import_villages(self, df, catchment_lookup):
-        distinct_villages = df[["catchment_code", "village_code", "village_name"]].drop_duplicates()
-        villages = []
-        for _, row in distinct_villages.iterrows():
-            name = row["village_name"]
-            code = row["village_code"]
-            parent = catchment_lookup.get(row["catchment_code"])
+        gvhs = []
+        for _, row in distinct.iterrows():
+            parent = ta_lookup.get(row["traditional_authority_code"])
             if not parent:
-                self.stderr.write(f"Skipping village {row} due to missing catchment {row['catchment_code']}")
+                self.stderr.write(
+                    f"Skipping GVH {row['group_village_head_code']} due to missing TA {row['traditional_authority_code']}"
+                )
                 continue
-            villages.append(Location(name=name, code=code, type='V', parent=parent))
+            gvhs.append(Location(code=row["group_village_head_code"], name=row["GVH"], type="W", parent=parent))
+
+        with transaction.atomic():
+            Location.objects.bulk_create(gvhs, ignore_conflicts=True)
+
+        lookup = self._active_lookup("W", distinct["group_village_head_code"])
+        self.stdout.write(f"Successfully imported {len(gvhs)} GVHs.")
+        return lookup
+
+    def import_villages(self, df, gvh_lookup):
+        # Village = leaf level (Location type V), sitting under its GVH.
+        distinct = df[["group_village_head_code", "village_code", "village_name"]].dropna(
+            subset=["village_code", "group_village_head_code"]
+        ).drop_duplicates()
+
+        villages = []
+        for _, row in distinct.iterrows():
+            parent = gvh_lookup.get(row["group_village_head_code"])
+            if not parent:
+                self.stderr.write(
+                    f"Skipping village {row['village_code']} due to missing GVH {row['group_village_head_code']}"
+                )
+                continue
+            villages.append(Location(code=row["village_code"], name=row["village_name"], type="V", parent=parent))
 
         with transaction.atomic():
             Location.objects.bulk_create(villages, ignore_conflicts=True)
 
         self.stdout.write(f"Successfully imported {len(villages)} villages.")
+
+    @staticmethod
+    def _active_lookup(location_type, codes):
+        # Map code -> active Location for the given type, used to resolve parents
+        # of the next level down.
+        return {
+            loc.code: loc
+            for loc in Location.objects.filter(
+                type=location_type,
+                code__in=list(codes.unique()),
+                validity_to__isnull=True,
+            )
+        }
