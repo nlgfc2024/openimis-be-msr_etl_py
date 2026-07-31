@@ -629,10 +629,6 @@ class UBRLocationSource(DataSource):
             session, url, headers, {"geo_location_type_id": 1}, "districts"
         )
 
-        prefix = "batch_districts_"
-        identifier = get_timestamped_batch_identifier(prefix)
-        yield {"data_type": "D", "data": district_rows}, identifier
-
         for district in district_rows:
             district_code = district.get("geo_location_code")
             if not district_code:
@@ -643,6 +639,17 @@ class UBRLocationSource(DataSource):
             ta_rows = self.fetch_geo_locations_from_api(
                 session, url, headers, {"geo_location_type_id": 2, "district_code": district_code}, "TAs"
             )
+
+            if not ta_rows:
+                logger.warning(
+                    "Skipping district %s because UBR returned no TAs",
+                    district_code,
+                )
+                continue
+
+            prefix = f"batch_district_{district_code}_"
+            identifier = get_timestamped_batch_identifier(prefix)
+            yield {"data_type": "D", "data": [district]}, identifier
 
             prefix = f"batch_tas_{district_code}_"
             identifier = get_timestamped_batch_identifier(prefix)
