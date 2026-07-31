@@ -50,9 +50,11 @@ Default configuration is defined in `msr_etl/apps.py`:
   "source_timeout_seconds": 300,
   "source_retry_total": 3,
   "source_retry_backoff_factor": 1.0,
+  "source_percentile_chunk_size": 10,
+  "source_percentile_chunk_delay_seconds": 1.0,
   "source_verify_ssl": true,
   "source_ca_bundle_path": "",
-  "sink_model_lookup_field": "json_ext__external_id",
+  "sink_model_lookup_field": "json_ext__ubr_id",
   "sink_update_existing": true,
   "gql_query_msr_etl_rule_perms": ["953001"],
   "gql_mutation_execute_msr_etl_rule_perms": ["953002"]
@@ -71,6 +73,8 @@ Source transport settings:
 - `source_timeout_seconds`: request timeout for each pull call.
 - `source_retry_total`: total retry count for transient HTTP/network failures.
 - `source_retry_backoff_factor`: exponential retry backoff factor.
+- `source_percentile_chunk_size`: maximum inclusive percentile categories sent in one UBR household request.
+- `source_percentile_chunk_delay_seconds`: delay between consecutive percentile chunk requests.
 - `source_verify_ssl`: keep `true` in production to validate server certificates.
 - `source_ca_bundle_path`: optional path to a custom CA bundle file for environments using private/self-signed CA chains.
 
@@ -174,6 +178,9 @@ Backend behavior:
 - `gvh` and `village` are optional, but a village can only be supplied together with its parent GVH.
 - When both `gvh` and `village` are provided, the backend verifies the complete District → TA → GVH → Village hierarchy.
 - Every outbound UBR location parameter comes from the frontend request; the backend validates but does not derive missing parameters.
+- The requested percentile range is split into non-overlapping inclusive chunks before calling UBR. With the default size of `10`, `0–20` becomes `0–9`, `10–19`, and `20–20`.
+- Each successful percentile chunk is transformed and pushed immediately. Batch identifiers include the chunk bounds, and reruns use `json_ext__ubr_id` to distinguish existing individuals from new records.
+- A later chunk failure does not roll back earlier successful workflow imports; the failed chunk bounds are included in the ETL error so the operation can be diagnosed and safely rerun.
 - Each import results in a UBR API call with all selected location relationship parameters.
 - `classification` takes precedence over `wealthQuintiles` when both are supplied.
 - Location codes are validated against active openIMIS `Location` records before any UBR API call is made.

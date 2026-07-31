@@ -1,8 +1,9 @@
 import logging
 from unittest.mock import patch, MagicMock
 
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 
+from msr_etl.apps import MsrEtlConfig
 from msr_etl.auth_provider import get_auth_provider
 from msr_etl.sources import UBRIndividualSource, UBRLocationSource
 import requests
@@ -24,7 +25,7 @@ MOCKED_UBR_RESPONSE_DATA = [
 ]
 
 
-class UBRIndividualSourceTestCase(TestCase):
+class UBRIndividualSourceTestCase(SimpleTestCase):
 
     @classmethod
     def setUpClass(cls):
@@ -77,12 +78,12 @@ class UBRIndividualSourceTestCase(TestCase):
         """
         # Setup the filter mock to return different codes based on the filter arguments
         def filter_side_effect(*args, **kwargs):
-            if kwargs.get("type") == "D":
+            if kwargs.get("type") == "R":
                 # Districts
                 mock_qs = MagicMock()
                 mock_qs.values_list.return_value = self.mocked_district_codes
                 return mock_qs
-            elif kwargs.get("type") == "W":
+            elif kwargs.get("type") == "D":
                 # TAs for district
                 mock_qs = MagicMock()
                 mock_qs.values_list.return_value = self.mocked_ta_codes
@@ -233,6 +234,121 @@ class UBRIndividualSourceTestCase(TestCase):
                 district_code="101",
                 ta_code="10101",
             )
+
+    @patch.object(MsrEtlConfig, "source_percentile_chunk_size", 10)
+    def test_percentile_chunks_are_inclusive_and_non_overlapping(self):
+        source = UBRIndividualSource(
+            get_auth_provider('noauth'),
+            pmt_percentile_range=range(0, 101),
+        )
+
+        chunks = [
+            (chunk.start, chunk.stop - 1)
+            for chunk in source._iter_percentile_chunks()
+        ]
+
+        self.assertEqual(chunks, [
+            (0, 9),
+            (10, 19),
+            (20, 29),
+            (30, 39),
+            (40, 49),
+            (50, 59),
+            (60, 69),
+            (70, 79),
+            (80, 89),
+            (90, 99),
+            (100, 100),
+        ])
+
+    @patch.object(MsrEtlConfig, "source_percentile_chunk_delay_seconds", 0)
+    @patch.object(MsrEtlConfig, "source_percentile_chunk_size", 10)
+    @patch("time.sleep")
+    @patch("requests.Session.post")
+    @patch("location.models.Location.objects.filter")
+    def test_pull_streams_chunks_and_deduplicates_households(
+        self,
+        mock_location_filter,
+        mock_post,
+        mock_sleep,
+    ):
+        location_qs = MagicMock()
+        location_qs.exists.return_value = True
+        mock_location_filter.return_value = location_qs
+        mock_post.side_effect = [
+            MagicMock(ok=True, json=MagicMock(return_value={
+                "error_occurred": False,
+                "targeting_data": [{"id": 1}, {"id": 2}],
+            })),
+            MagicMock(ok=True, json=MagicMock(return_value={
+                "error_occurred": False,
+                "targeting_data": [{"id": 2}, {"id": 3}],
+            })),
+            MagicMock(ok=True, json=MagicMock(return_value={
+                "error_occurred": False,
+                "targeting_data": [{"id": 4}],
+            })),
+        ]
+
+        source = UBRIndividualSource(
+            get_auth_provider('noauth'),
+            pmt_percentile_range=range(0, 21),
+            district="101",
+            ta="10101",
+        )
+
+        results = list(source.pull())
+
+        self.assertEqual(
+            [[row["id"] for row in rows] for rows, _ in results],
+            [[1, 2], [3], [4]],
+        )
+        self.assertEqual(
+            [
+                (
+                    call.kwargs["params"]["lower_percentile_category"],
+                    call.kwargs["params"]["upper_percentile_category"],
+                )
+                for call in mock_post.call_args_list
+            ],
+            [("0", "9"), ("10", "19"), ("20", "20")],
+        )
+        self.assertTrue(results[0][1].startswith("batch_101_10101_pmt_0_9_"))
+        self.assertTrue(results[1][1].startswith("batch_101_10101_pmt_10_19_"))
+        self.assertTrue(results[2][1].startswith("batch_101_10101_pmt_20_20_"))
+        mock_sleep.assert_called_once_with(5)
+
+    @patch.object(MsrEtlConfig, "source_percentile_chunk_delay_seconds", 0)
+    @patch.object(MsrEtlConfig, "source_percentile_chunk_size", 10)
+    @patch("requests.Session.post")
+    @patch("location.models.Location.objects.filter")
+    def test_pull_error_identifies_failed_percentile_chunk(
+        self,
+        mock_location_filter,
+        mock_post,
+    ):
+        location_qs = MagicMock()
+        location_qs.exists.return_value = True
+        mock_location_filter.return_value = location_qs
+        mock_post.side_effect = [
+            MagicMock(ok=True, json=MagicMock(return_value={
+                "error_occurred": False,
+                "targeting_data": [{"id": 1}],
+            })),
+            requests.exceptions.ReadTimeout("UBR read timed out"),
+        ]
+        source = UBRIndividualSource(
+            get_auth_provider('noauth'),
+            pmt_percentile_range=range(0, 21),
+            district="101",
+            ta="10101",
+        )
+
+        with self.assertRaisesRegex(
+            source.Error,
+            "percentile chunk 10-19 failed",
+        ):
+            list(source.pull())
 
 
 class UBRLocationSourceTestCase(TestCase):
