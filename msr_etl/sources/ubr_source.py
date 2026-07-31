@@ -141,6 +141,7 @@ class UBRIndividualSource(DataSource):
         pmt_percentile_range: range = range(0, 11),
         district: str = None,
         ta: str = None,
+        gvh: str = None,
         village: str = None,
         wealth_quintiles: list = None,
         classification: list = None,
@@ -161,6 +162,7 @@ class UBRIndividualSource(DataSource):
         self.pmt_percentile_range = pmt_percentile_range
         self.district = district
         self.ta = ta
+        self.gvh = gvh
         self.village = village
         self.wealth_quintiles = wealth_quintiles or [
             UBRWealthQuintiles.POOREST.value,
@@ -226,10 +228,25 @@ class UBRIndividualSource(DataSource):
         params = {
             "district_code": district_code,
             "traditional_authority_code": ta_code,
+        }
+
+        if self.gvh:
+            self._validate_gvh_code(ta_code)
+        if self.village:
+            if not self.gvh:
+                raise self.Error("gvh is required when village is provided.")
+            self._validate_village_code(ta_code)
+
+        if self.gvh:
+            params["group_village_head_code"] = self.gvh
+        if self.village:
+            params["village_code"] = self.village
+
+        params.update({
             "lower_percentile_category": str(self.pmt_percentile_range.start),
             "upper_percentile_category": str(self.pmt_percentile_range.stop - 1),
             "wealth_quintile": ",".join([str(q) for q in self.wealth_quintiles]),
-        }
+        })
         if self.classification:
             params["wealth_quintile"] = ",".join([str(c) for c in self.classification])
         if self.gender:
@@ -238,9 +255,6 @@ class UBRIndividualSource(DataSource):
             params["minAge"] = str(self.min_age)
         if self.max_age is not None:
             params["maxAge"] = str(self.max_age)
-        if self.village:
-            self._validate_village_code(ta_code)
-            params["village_code"] = self.village
 
         res = _post_with_resilience(
             session,
@@ -298,17 +312,36 @@ class UBRIndividualSource(DataSource):
             validity_to__isnull=True,
         ).values_list('code', flat=True)
 
+    def _validate_gvh_code(self, ta_code):
+        if not Location.objects.filter(
+            code=self.gvh,
+            parent__code=ta_code,
+            parent__type='D',
+            parent__validity_to__isnull=True,
+            type='W',
+            validity_to__isnull=True,
+        ).exists():
+            raise self.Error(
+                f"GVH code '{self.gvh}' was not found under TA '{ta_code}'."
+            )
+
     def _validate_village_code(self, ta_code):
         # Village (type V) sits under a GVH (type W) which sits under the TA (type D),
-        # so a village belongs to a TA via parent__parent.
+        # so validate every relationship using the codes supplied by the frontend.
         if not Location.objects.filter(
             code=self.village,
+            parent__code=self.gvh,
             parent__parent__code=ta_code,
+            parent__parent__type='D',
+            parent__parent__validity_to__isnull=True,
+            parent__type='W',
+            parent__validity_to__isnull=True,
             type='V',
             validity_to__isnull=True,
         ).exists():
             raise self.Error(
-                f"Village code '{self.village}' was not found under TA '{ta_code}'."
+                f"Village code '{self.village}' was not found under GVH "
+                f"'{self.gvh}' and TA '{ta_code}'."
             )
 
     def _apply_local_filters(self, rows):
