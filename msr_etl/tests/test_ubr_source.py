@@ -458,8 +458,9 @@ class UBRLocationSourceTestCase(TestCase):
         self.assertEqual(villages[0]["geo_location_code"], "101010101")
         self.assertEqual(villages[1]["geo_location_code"], "101010102")
 
+    @patch("msr_etl.sources.ubr_source.time.sleep")
     @patch("requests.Session.post")
-    def test_pull(self, mock_post):
+    def test_pull(self, mock_post, mock_sleep):
         # Mock the API responses for districts, TAs, and villages
         mock_post.side_effect = [
             MagicMock(ok=True, json=MagicMock(return_value=self.mocked_districts_response)),  # Districts
@@ -476,20 +477,75 @@ class UBRLocationSourceTestCase(TestCase):
         results = list(source.pull())
 
         # Assertions
-        self.assertEqual(len(results), 7)  # 1 for districts, 2 for TAs, 2 for GVHs, 2 for villages
+        self.assertEqual(len(results), 8)  # 2 districts, 2 TAs, 2 GVHs, 2 villages
         self.assertEqual(results[0][0]["data_type"], "D")
         self.assertEqual(results[1][0]["data_type"], "T")
         self.assertEqual(results[2][0]["data_type"], "G")
         self.assertEqual(results[3][0]["data_type"], "V")
-        self.assertEqual(results[4][0]["data_type"], "T")
-        self.assertEqual(results[5][0]["data_type"], "G")
-        self.assertEqual(results[6][0]["data_type"], "V")
+        self.assertEqual(results[4][0]["data_type"], "D")
+        self.assertEqual(results[5][0]["data_type"], "T")
+        self.assertEqual(results[6][0]["data_type"], "G")
+        self.assertEqual(results[7][0]["data_type"], "V")
 
         # Check the number of records in each result
-        self.assertEqual(len(results[0][0]["data"]), 2)  # Districts
+        self.assertEqual(len(results[0][0]["data"]), 1)  # District 101
         self.assertEqual(len(results[1][0]["data"]), 2)  # TAs for District 101
         self.assertEqual(len(results[2][0]["data"]), 2)  # GVHs for District 101
         self.assertEqual(len(results[3][0]["data"]), 2)  # Villages for District 101
-        self.assertEqual(len(results[4][0]["data"]), 2)  # TAs for District 102
-        self.assertEqual(len(results[5][0]["data"]), 2)  # GVHs for District 102
-        self.assertEqual(len(results[6][0]["data"]), 2)  # Villages for District 102
+        self.assertEqual(len(results[4][0]["data"]), 1)  # District 102
+        self.assertEqual(len(results[5][0]["data"]), 2)  # TAs for District 102
+        self.assertEqual(len(results[6][0]["data"]), 2)  # GVHs for District 102
+        self.assertEqual(len(results[7][0]["data"]), 2)  # Villages for District 102
+        self.assertEqual(mock_sleep.call_count, 2)
+
+    @patch("msr_etl.sources.ubr_source.time.sleep")
+    @patch("requests.Session.post")
+    def test_pull_skips_district_and_children_when_no_tas(
+        self,
+        mock_post,
+        mock_sleep,
+    ):
+        empty_tas_response = {
+            "error_occurred": False,
+            "total_records": 0,
+            "geo_locations": [],
+        }
+        mock_post.side_effect = [
+            MagicMock(
+                ok=True,
+                json=MagicMock(return_value=self.mocked_districts_response),
+            ),
+            MagicMock(ok=True, json=MagicMock(return_value=empty_tas_response)),
+            MagicMock(
+                ok=True,
+                json=MagicMock(return_value=self.mocked_tas_response[1]),
+            ),
+            MagicMock(
+                ok=True,
+                json=MagicMock(return_value=self.mocked_gvhs_response[1]),
+            ),
+            MagicMock(
+                ok=True,
+                json=MagicMock(return_value=self.mocked_villages_response[1]),
+            ),
+        ]
+
+        results = list(UBRLocationSource(get_auth_provider("noauth")).pull())
+
+        self.assertEqual(
+            [batch["data_type"] for batch, _identifier in results],
+            ["D", "T", "G", "V"],
+        )
+        self.assertEqual(results[0][0]["data"][0]["geo_location_code"], "102")
+        requested_params = [
+            call.kwargs["json"] for call in mock_post.call_args_list
+        ]
+        self.assertNotIn(
+            {"geo_location_type_id": 4, "district_code": "101"},
+            requested_params,
+        )
+        self.assertNotIn(
+            {"geo_location_type_id": 11, "district_code": "101"},
+            requested_params,
+        )
+        mock_sleep.assert_called_once_with(30)
