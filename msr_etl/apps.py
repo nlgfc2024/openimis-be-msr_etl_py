@@ -15,6 +15,8 @@ DEFAULT_CONFIG = {
     "source_timeout_seconds": 300,
     "source_retry_total": 3,
     "source_retry_backoff_factor": 1.0,
+    "source_percentile_chunk_size": 10,
+    "source_percentile_chunk_delay_seconds": 1.0,
     "source_verify_ssl": True,
     "source_ca_bundle_path": "",
 
@@ -26,7 +28,7 @@ DEFAULT_CONFIG = {
     "adapter_location_name_field": "locationName",
     "adapter_location_code_field": "locationCode",
 
-    "sink_model_lookup_field": "json_ext__external_id",
+    "sink_model_lookup_field": "json_ext__ubr_id",
     "sink_update_existing": True,
     "sink_import_username": "",
 
@@ -51,6 +53,8 @@ class MsrEtlConfig(AppConfig):
     source_timeout_seconds = None
     source_retry_total = None
     source_retry_backoff_factor = None
+    source_percentile_chunk_size = None
+    source_percentile_chunk_delay_seconds = None
     source_verify_ssl = None
     source_ca_bundle_path = None
 
