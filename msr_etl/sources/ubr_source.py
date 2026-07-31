@@ -239,7 +239,8 @@ class UBRIndividualSource(DataSource):
         if self.max_age is not None:
             params["maxAge"] = str(self.max_age)
         if self.village:
-            self._validate_village_code(ta_code)
+            gvh_code = self._get_village_gvh_code(ta_code)
+            params["group_village_head_code"] = gvh_code
             params["village_code"] = self.village
 
         res = _post_with_resilience(
@@ -298,18 +299,26 @@ class UBRIndividualSource(DataSource):
             validity_to__isnull=True,
         ).values_list('code', flat=True)
 
-    def _validate_village_code(self, ta_code):
+    def _get_village_gvh_code(self, ta_code):
         # Village (type V) sits under a GVH (type W) which sits under the TA (type D),
-        # so a village belongs to a TA via parent__parent.
-        if not Location.objects.filter(
+        # so validate the complete hierarchy and return the GVH required by the UBR API.
+        gvh_code = Location.objects.filter(
             code=self.village,
             parent__parent__code=ta_code,
+            parent__parent__type='D',
+            parent__parent__validity_to__isnull=True,
+            parent__type='W',
+            parent__validity_to__isnull=True,
             type='V',
             validity_to__isnull=True,
-        ).exists():
+        ).values_list('parent__code', flat=True).first()
+
+        if not gvh_code:
             raise self.Error(
                 f"Village code '{self.village}' was not found under TA '{ta_code}'."
             )
+
+        return gvh_code
 
     def _apply_local_filters(self, rows):
         filtered = []

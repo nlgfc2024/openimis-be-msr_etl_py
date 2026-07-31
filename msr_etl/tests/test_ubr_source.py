@@ -155,7 +155,8 @@ class UBRIndividualSourceTestCase(TestCase):
         def filter_side_effect(*args, **kwargs):
             mock_qs = MagicMock()
             mock_qs.exists.return_value = True
-            mock_qs.values_list.return_value = []
+            if kwargs.get("type") == "V":
+                mock_qs.values_list.return_value.first.return_value = "1010101"
             return mock_qs
 
         mock_location_filter.side_effect = filter_side_effect
@@ -187,6 +188,7 @@ class UBRIndividualSourceTestCase(TestCase):
         _, kwargs = mock_post.call_args
         self.assertEqual(kwargs["params"]["district_code"], "101")
         self.assertEqual(kwargs["params"]["traditional_authority_code"], "10101")
+        self.assertEqual(kwargs["params"]["group_village_head_code"], "1010101")
         self.assertEqual(kwargs["params"]["village_code"], "10101001")
         self.assertEqual(kwargs["params"]["lower_percentile_category"], "1")
         self.assertEqual(kwargs["params"]["upper_percentile_category"], "2")
@@ -196,6 +198,16 @@ class UBRIndividualSourceTestCase(TestCase):
         self.assertEqual(kwargs["params"]["maxAge"], "17")
         self.assertEqual(len(pulled_data), 1)
         self.assertTrue(identifiers[0].startswith("batch_101_10101_"))
+        mock_location_filter.assert_any_call(
+            code="10101001",
+            parent__parent__code="10101",
+            parent__parent__type="D",
+            parent__parent__validity_to__isnull=True,
+            parent__type="W",
+            parent__validity_to__isnull=True,
+            type="V",
+            validity_to__isnull=True,
+        )
 
     def test_fetch_households_ssl_error_has_actionable_message(self):
         source = UBRIndividualSource(get_auth_provider('noauth'))
