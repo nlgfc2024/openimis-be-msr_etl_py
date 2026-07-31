@@ -86,8 +86,9 @@ Use this query to fetch household records from UBR. The response contains raw UB
 
 ```graphql
 query FetchMsrUbrIndividuals(
-  $district: String
-  $ta: String
+  $district: String!
+  $ta: String!
+  $gvh: String
   $village: String
   $lowerPercentileCategory: Int
   $upperPercentileCategory: Int
@@ -100,6 +101,7 @@ query FetchMsrUbrIndividuals(
   msrUbrIndividuals(
     district: $district
     ta: $ta
+    gvh: $gvh
     village: $village
     lowerPercentileCategory: $lowerPercentileCategory
     upperPercentileCategory: $upperPercentileCategory
@@ -124,6 +126,7 @@ Example variables (narrowly targeted fetch):
 {
   "district": "101",
   "ta": "10101",
+  "gvh": "1010101",
   "village": "10101001",
   "lowerPercentileCategory": 0,
   "upperPercentileCategory": 20,
@@ -134,12 +137,13 @@ Example variables (narrowly targeted fetch):
 }
 ```
 
-**Location filters** (all optional — narrower scope = fewer API calls):
+**Location filters**:
 
 | Argument | Meaning | UBR param | Default |
 |----------|---------|-----------|---------|
-| `district` | District code | `district_code` | all active districts |
-| `ta` | Traditional authority code | `traditional_authority_code` | all TAs in district |
+| `district` | District code (required) | `district_code` | none |
+| `ta` | Traditional authority code (required) | `traditional_authority_code` | none |
+| `gvh` | Group Village Head code | `group_village_head_code` | not sent unless resolved from village |
 | `village` | Village code | `village_code` | all villages in TA |
 
 **Targeting filters** (all optional — forwarded directly to the UBR API):
@@ -166,9 +170,10 @@ Wealth quintile values:
 
 Backend behavior:
 
-- If no `district` is provided, the backend iterates all active openIMIS districts.
-- If no `ta` is provided, the backend iterates all active TAs under the district.
-- Each district/TA pair results in a separate UBR API call; the module sleeps 5 seconds between calls to avoid rate limiting.
+- `district` and `ta` are required for household queries and imports.
+- `gvh` and `village` are optional. When a village is provided without a GVH, the backend derives its active parent GVH.
+- When both `gvh` and `village` are provided, the backend verifies the complete District → TA → GVH → Village hierarchy.
+- Each import results in a UBR API call with all selected location relationship parameters.
 - `classification` takes precedence over `wealthQuintiles` when both are supplied.
 - Location codes are validated against active openIMIS `Location` records before any UBR API call is made.
 
@@ -272,6 +277,7 @@ mutation ExecuteMsrEtlService {
     nameOfService: "UBRIndividualService"
     district: "101"
     ta: "10101"
+    gvh: "1010101"
     village: "10101001"
     lowerPercentileCategory: 0
     upperPercentileCategory: 20

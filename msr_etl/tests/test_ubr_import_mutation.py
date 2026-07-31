@@ -18,6 +18,7 @@ class ExecuteMsrUbrIndividualsImportMutationTestCase(SimpleTestCase):
         self.supported_filters = {
             "district": "101",
             "ta": "10101",
+            "gvh": "1010101",
             "village": "101010101",
             "lower_percentile_category": 0,
             "upper_percentile_category": 20,
@@ -46,6 +47,13 @@ class ExecuteMsrUbrIndividualsImportMutationTestCase(SimpleTestCase):
         )
 
         self.assertEqual(result, self.supported_filters)
+
+    def test_ubr_individual_service_requires_district_and_ta(self):
+        with self.assertRaisesRegex(
+            ValueError,
+            "district and ta are required",
+        ):
+            UBRIndividualService(self.user, district="101")
 
     @patch("msr_etl.gql_mutations.MsrEtlServiceMutation._get_supported_service_kwargs")
     @patch("msr_etl.gql_mutations.UBRIndividualService")

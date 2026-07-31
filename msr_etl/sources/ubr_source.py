@@ -141,6 +141,7 @@ class UBRIndividualSource(DataSource):
         pmt_percentile_range: range = range(0, 11),
         district: str = None,
         ta: str = None,
+        gvh: str = None,
         village: str = None,
         wealth_quintiles: list = None,
         classification: list = None,
@@ -161,6 +162,7 @@ class UBRIndividualSource(DataSource):
         self.pmt_percentile_range = pmt_percentile_range
         self.district = district
         self.ta = ta
+        self.gvh = gvh
         self.village = village
         self.wealth_quintiles = wealth_quintiles or [
             UBRWealthQuintiles.POOREST.value,
@@ -226,10 +228,27 @@ class UBRIndividualSource(DataSource):
         params = {
             "district_code": district_code,
             "traditional_authority_code": ta_code,
+        }
+
+        gvh_code = self._get_gvh_code(ta_code) if self.gvh else None
+        if self.village:
+            village_gvh_code = self._get_village_gvh_code(ta_code)
+            if gvh_code and gvh_code != village_gvh_code:
+                raise self.Error(
+                    f"Village code '{self.village}' was not found under GVH '{gvh_code}'."
+                )
+            gvh_code = village_gvh_code
+
+        if gvh_code:
+            params["group_village_head_code"] = gvh_code
+        if self.village:
+            params["village_code"] = self.village
+
+        params.update({
             "lower_percentile_category": str(self.pmt_percentile_range.start),
             "upper_percentile_category": str(self.pmt_percentile_range.stop - 1),
             "wealth_quintile": ",".join([str(q) for q in self.wealth_quintiles]),
-        }
+        })
         if self.classification:
             params["wealth_quintile"] = ",".join([str(c) for c in self.classification])
         if self.gender:
@@ -238,10 +257,6 @@ class UBRIndividualSource(DataSource):
             params["minAge"] = str(self.min_age)
         if self.max_age is not None:
             params["maxAge"] = str(self.max_age)
-        if self.village:
-            gvh_code = self._get_village_gvh_code(ta_code)
-            params["group_village_head_code"] = gvh_code
-            params["village_code"] = self.village
 
         res = _post_with_resilience(
             session,
@@ -298,6 +313,21 @@ class UBRIndividualSource(DataSource):
             type='D',
             validity_to__isnull=True,
         ).values_list('code', flat=True)
+
+    def _get_gvh_code(self, ta_code):
+        if not Location.objects.filter(
+            code=self.gvh,
+            parent__code=ta_code,
+            parent__type='D',
+            parent__validity_to__isnull=True,
+            type='W',
+            validity_to__isnull=True,
+        ).exists():
+            raise self.Error(
+                f"GVH code '{self.gvh}' was not found under TA '{ta_code}'."
+            )
+
+        return self.gvh
 
     def _get_village_gvh_code(self, ta_code):
         # Village (type V) sits under a GVH (type W) which sits under the TA (type D),

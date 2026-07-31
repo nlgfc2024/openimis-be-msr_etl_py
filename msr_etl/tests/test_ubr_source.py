@@ -170,6 +170,7 @@ class UBRIndividualSourceTestCase(TestCase):
             pmt_percentile_range=range(1, 3),
             district="101",
             ta="10101",
+            gvh="1010101",
             village="10101001",
             wealth_quintiles=[2, 5],
             classification=[3],
@@ -198,6 +199,14 @@ class UBRIndividualSourceTestCase(TestCase):
         self.assertEqual(kwargs["params"]["maxAge"], "17")
         self.assertEqual(len(pulled_data), 1)
         self.assertTrue(identifiers[0].startswith("batch_101_10101_"))
+        mock_location_filter.assert_any_call(
+            code="1010101",
+            parent__code="10101",
+            parent__type="D",
+            parent__validity_to__isnull=True,
+            type="W",
+            validity_to__isnull=True,
+        )
         mock_location_filter.assert_any_call(
             code="10101001",
             parent__parent__code="10101",

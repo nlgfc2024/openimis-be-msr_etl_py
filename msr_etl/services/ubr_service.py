@@ -11,6 +11,7 @@ class UBRIndividualService(MsrETLService):
                  user: User,
                  district: str = None,
                  ta: str = None,
+                 gvh: str = None,
                  village: str = None,
                  lower_percentile_category: int = None,
                  upper_percentile_category: int = None,
@@ -26,6 +27,9 @@ class UBRIndividualService(MsrETLService):
                  source: DataSource = None,
                  adapter: DataAdapter = None,
                  sink: DataSink = None):
+        if not district or not ta:
+            raise ValueError("district and ta are required for UBR household imports")
+
         if lower_percentile_category is not None or upper_percentile_category is not None:
             lower = 0 if lower_percentile_category is None else lower_percentile_category
             upper = 100 if upper_percentile_category is None else upper_percentile_category
@@ -37,6 +41,7 @@ class UBRIndividualService(MsrETLService):
             source=source or UBRIndividualSource(
                 district=district,
                 ta=ta,
+                gvh=gvh,
                 village=village,
                 pmt_percentile_range=pmt_percentile_range,
                 wealth_quintiles=wealth_quintiles,
