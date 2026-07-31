@@ -230,17 +230,15 @@ class UBRIndividualSource(DataSource):
             "traditional_authority_code": ta_code,
         }
 
-        gvh_code = self._get_gvh_code(ta_code) if self.gvh else None
+        if self.gvh:
+            self._validate_gvh_code(ta_code)
         if self.village:
-            village_gvh_code = self._get_village_gvh_code(ta_code)
-            if gvh_code and gvh_code != village_gvh_code:
-                raise self.Error(
-                    f"Village code '{self.village}' was not found under GVH '{gvh_code}'."
-                )
-            gvh_code = village_gvh_code
+            if not self.gvh:
+                raise self.Error("gvh is required when village is provided.")
+            self._validate_village_code(ta_code)
 
-        if gvh_code:
-            params["group_village_head_code"] = gvh_code
+        if self.gvh:
+            params["group_village_head_code"] = self.gvh
         if self.village:
             params["village_code"] = self.village
 
@@ -314,7 +312,7 @@ class UBRIndividualSource(DataSource):
             validity_to__isnull=True,
         ).values_list('code', flat=True)
 
-    def _get_gvh_code(self, ta_code):
+    def _validate_gvh_code(self, ta_code):
         if not Location.objects.filter(
             code=self.gvh,
             parent__code=ta_code,
@@ -327,13 +325,12 @@ class UBRIndividualSource(DataSource):
                 f"GVH code '{self.gvh}' was not found under TA '{ta_code}'."
             )
 
-        return self.gvh
-
-    def _get_village_gvh_code(self, ta_code):
+    def _validate_village_code(self, ta_code):
         # Village (type V) sits under a GVH (type W) which sits under the TA (type D),
-        # so validate the complete hierarchy and return the GVH required by the UBR API.
-        gvh_code = Location.objects.filter(
+        # so validate every relationship using the codes supplied by the frontend.
+        if not Location.objects.filter(
             code=self.village,
+            parent__code=self.gvh,
             parent__parent__code=ta_code,
             parent__parent__type='D',
             parent__parent__validity_to__isnull=True,
@@ -341,14 +338,11 @@ class UBRIndividualSource(DataSource):
             parent__validity_to__isnull=True,
             type='V',
             validity_to__isnull=True,
-        ).values_list('parent__code', flat=True).first()
-
-        if not gvh_code:
+        ).exists():
             raise self.Error(
-                f"Village code '{self.village}' was not found under TA '{ta_code}'."
+                f"Village code '{self.village}' was not found under GVH "
+                f"'{self.gvh}' and TA '{ta_code}'."
             )
-
-        return gvh_code
 
     def _apply_local_filters(self, rows):
         filtered = []

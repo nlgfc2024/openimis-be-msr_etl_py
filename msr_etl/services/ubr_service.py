@@ -29,6 +29,8 @@ class UBRIndividualService(MsrETLService):
                  sink: DataSink = None):
         if not district or not ta:
             raise ValueError("district and ta are required for UBR household imports")
+        if village and not gvh:
+            raise ValueError("gvh is required when village is provided")
 
         if lower_percentile_category is not None or upper_percentile_category is not None:
             lower = 0 if lower_percentile_category is None else lower_percentile_category

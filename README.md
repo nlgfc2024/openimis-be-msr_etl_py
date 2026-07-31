@@ -143,7 +143,7 @@ Example variables (narrowly targeted fetch):
 |----------|---------|-----------|---------|
 | `district` | District code (required) | `district_code` | none |
 | `ta` | Traditional authority code (required) | `traditional_authority_code` | none |
-| `gvh` | Group Village Head code | `group_village_head_code` | not sent unless resolved from village |
+| `gvh` | Group Village Head code | `group_village_head_code` | not sent |
 | `village` | Village code | `village_code` | all villages in TA |
 
 **Targeting filters** (all optional — forwarded directly to the UBR API):
@@ -171,8 +171,9 @@ Wealth quintile values:
 Backend behavior:
 
 - `district` and `ta` are required for household queries and imports.
-- `gvh` and `village` are optional. When a village is provided without a GVH, the backend derives its active parent GVH.
+- `gvh` and `village` are optional, but a village can only be supplied together with its parent GVH.
 - When both `gvh` and `village` are provided, the backend verifies the complete District → TA → GVH → Village hierarchy.
+- Every outbound UBR location parameter comes from the frontend request; the backend validates but does not derive missing parameters.
 - Each import results in a UBR API call with all selected location relationship parameters.
 - `classification` takes precedence over `wealthQuintiles` when both are supplied.
 - Location codes are validated against active openIMIS `Location` records before any UBR API call is made.

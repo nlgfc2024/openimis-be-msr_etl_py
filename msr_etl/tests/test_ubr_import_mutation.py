@@ -55,6 +55,18 @@ class ExecuteMsrUbrIndividualsImportMutationTestCase(SimpleTestCase):
         ):
             UBRIndividualService(self.user, district="101")
 
+    def test_ubr_individual_service_requires_gvh_with_village(self):
+        with self.assertRaisesRegex(
+            ValueError,
+            "gvh is required when village is provided",
+        ):
+            UBRIndividualService(
+                self.user,
+                district="101",
+                ta="10101",
+                village="101010101",
+            )
+
     @patch("msr_etl.gql_mutations.MsrEtlServiceMutation._get_supported_service_kwargs")
     @patch("msr_etl.gql_mutations.UBRIndividualService")
     def test_mutation_executes_ubr_individual_service(self, mock_service_class, mock_supported_kwargs):

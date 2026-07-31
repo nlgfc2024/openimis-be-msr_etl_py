@@ -155,8 +155,6 @@ class UBRIndividualSourceTestCase(TestCase):
         def filter_side_effect(*args, **kwargs):
             mock_qs = MagicMock()
             mock_qs.exists.return_value = True
-            if kwargs.get("type") == "V":
-                mock_qs.values_list.return_value.first.return_value = "1010101"
             return mock_qs
 
         mock_location_filter.side_effect = filter_side_effect
@@ -209,6 +207,7 @@ class UBRIndividualSourceTestCase(TestCase):
         )
         mock_location_filter.assert_any_call(
             code="10101001",
+            parent__code="1010101",
             parent__parent__code="10101",
             parent__parent__type="D",
             parent__parent__validity_to__isnull=True,
