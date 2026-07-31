@@ -73,6 +73,17 @@ def _get_retry_backoff_factor():
     return max(_get_float_config(MsrEtlConfig.source_retry_backoff_factor, 1.0), 0.0)
 
 
+def _get_percentile_chunk_size():
+    return max(_get_int_config(MsrEtlConfig.source_percentile_chunk_size, 10), 1)
+
+
+def _get_percentile_chunk_delay_seconds():
+    return max(
+        _get_float_config(MsrEtlConfig.source_percentile_chunk_delay_seconds, 1.0),
+        0.0,
+    )
+
+
 def _get_ssl_verify_setting():
     verify_ssl = _get_bool_config(MsrEtlConfig.source_verify_ssl, True)
     ca_bundle_path = str(MsrEtlConfig.source_ca_bundle_path or "").strip()
@@ -155,7 +166,12 @@ class UBRIndividualSource(DataSource):
     ):
         super().__init__()
 
-        if not (pmt_percentile_range.start >= 0 and pmt_percentile_range.stop <= 101):
+        if (
+            pmt_percentile_range.step != 1
+            or pmt_percentile_range.start < 0
+            or pmt_percentile_range.stop > 101
+            or pmt_percentile_range.start >= pmt_percentile_range.stop
+        ):
             raise self.Error("pmt_percentile_range must be between 0 and 100 inclusive.")
 
         self.auth_provider = auth_provider or get_auth_provider()
@@ -191,22 +207,29 @@ class UBRIndividualSource(DataSource):
 
         session = _create_retry_session()
 
-        district_codes = self._get_district_codes()
-
-        for district_code in district_codes:
-            ta_codes = self._get_ta_codes(district_code)
-
-            for ta_code in ta_codes:
-                rows = self.fetch_households(session, url, headers, district_code, ta_code)
-                if rows:
-                    prefix = f"batch_{district_code}_{ta_code}_"
-                    identifier = get_timestamped_batch_identifier(prefix)
-                    logger.info(f"Sending {len(rows)} records to data adaptor to process")
-                    yield rows, identifier
-
-                # Add a 5-second sleep after processing each TA
-                logger.info(f"Sleeping for 5 seconds after processing TA: {ta_code}")
-                time.sleep(5)
+        for rows, district_code, ta_code, chunk_lower, chunk_upper in (
+            self._iter_fetched_percentile_chunks(
+                session,
+                url,
+                headers,
+                sleep_after_ta=True,
+            )
+        ):
+            if not rows:
+                continue
+            prefix = (
+                f"batch_{district_code}_{ta_code}_"
+                f"pmt_{chunk_lower}_{chunk_upper}_"
+            )
+            identifier = get_timestamped_batch_identifier(prefix)
+            logger.info(
+                "Sending %s records for percentile chunk %s-%s "
+                "to data adaptor to process",
+                len(rows),
+                chunk_lower,
+                chunk_upper,
+            )
+            yield rows, identifier
 
     def fetch(self):
         headers = {
@@ -217,13 +240,77 @@ class UBRIndividualSource(DataSource):
         session = _create_retry_session()
 
         rows = []
-        for district_code in self._get_district_codes():
-            for ta_code in self._get_ta_codes(district_code):
-                rows.extend(self.fetch_households(session, url, headers, district_code, ta_code))
+        for chunk_rows, _, _, _, _ in self._iter_fetched_percentile_chunks(
+            session,
+            url,
+            headers,
+        ):
+            rows.extend(chunk_rows)
         return rows
 
-    def fetch_households(self, session, url, headers, district_code, ta_code):
+    def _iter_fetched_percentile_chunks(
+        self,
+        session,
+        url,
+        headers,
+        sleep_after_ta=False,
+    ):
+        percentile_chunks = list(self._iter_percentile_chunks())
+        seen_households = set()
+
+        for district_code in self._get_district_codes():
+            for ta_code in self._get_ta_codes(district_code):
+                for chunk_index, percentile_chunk in enumerate(percentile_chunks):
+                    chunk_lower = percentile_chunk.start
+                    chunk_upper = percentile_chunk.stop - 1
+                    try:
+                        rows = self.fetch_households(
+                            session,
+                            url,
+                            headers,
+                            district_code,
+                            ta_code,
+                            pmt_percentile_range=percentile_chunk,
+                        )
+                    except self.Error as exc:
+                        raise self.Error(
+                            f"UBR percentile chunk {chunk_lower}-{chunk_upper} failed: {exc}"
+                        ) from exc
+
+                    yield (
+                        self._deduplicate_households(rows, seen_households),
+                        district_code,
+                        ta_code,
+                        chunk_lower,
+                        chunk_upper,
+                    )
+
+                    if chunk_index < len(percentile_chunks) - 1:
+                        self._sleep_between_percentile_chunks(
+                            district_code,
+                            ta_code,
+                            chunk_lower,
+                            chunk_upper,
+                        )
+
+                if sleep_after_ta:
+                    logger.info(
+                        "Sleeping for 5 seconds after processing TA: %s",
+                        ta_code,
+                    )
+                    time.sleep(5)
+
+    def fetch_households(
+        self,
+        session,
+        url,
+        headers,
+        district_code,
+        ta_code,
+        pmt_percentile_range=None,
+    ):
         logger.debug(f"Fetching data for district: {district_code}, TA: {ta_code}")
+        percentile_range = pmt_percentile_range or self.pmt_percentile_range
 
         params = {
             "district_code": district_code,
@@ -243,8 +330,8 @@ class UBRIndividualSource(DataSource):
             params["village_code"] = self.village
 
         params.update({
-            "lower_percentile_category": str(self.pmt_percentile_range.start),
-            "upper_percentile_category": str(self.pmt_percentile_range.stop - 1),
+            "lower_percentile_category": str(percentile_range.start),
+            "upper_percentile_category": str(percentile_range.stop - 1),
             "wealth_quintile": ",".join([str(q) for q in self.wealth_quintiles]),
         })
         if self.classification:
@@ -275,6 +362,61 @@ class UBRIndividualSource(DataSource):
 
         rows = body.get("targeting_data", [])
         return self._apply_local_filters(rows)
+
+    def _iter_percentile_chunks(self):
+        chunk_size = _get_percentile_chunk_size()
+        requested_upper = self.pmt_percentile_range.stop - 1
+        chunk_lower = self.pmt_percentile_range.start
+
+        while chunk_lower <= requested_upper:
+            chunk_upper = min(chunk_lower + chunk_size - 1, requested_upper)
+            yield range(chunk_lower, chunk_upper + 1)
+            chunk_lower = chunk_upper + 1
+
+    @staticmethod
+    def _deduplicate_households(rows, seen_households):
+        unique_rows = []
+        for row in rows:
+            identity = UBRIndividualSource._get_household_identity(row)
+            if identity is not None:
+                if identity in seen_households:
+                    logger.warning(
+                        "Skipping duplicate UBR household across percentile chunks: %s",
+                        identity,
+                    )
+                    continue
+                seen_households.add(identity)
+            unique_rows.append(row)
+        return unique_rows
+
+    @staticmethod
+    def _get_household_identity(row):
+        for field in ("id", "form_number", "household_code"):
+            value = row.get(field)
+            if value not in (None, ""):
+                return field, str(value)
+        return None
+
+    @staticmethod
+    def _sleep_between_percentile_chunks(
+        district_code,
+        ta_code,
+        chunk_lower,
+        chunk_upper,
+    ):
+        delay_seconds = _get_percentile_chunk_delay_seconds()
+        if delay_seconds <= 0:
+            return
+        logger.info(
+            "Sleeping for %s seconds after UBR percentile chunk %s-%s "
+            "(district=%s, TA=%s)",
+            delay_seconds,
+            chunk_lower,
+            chunk_upper,
+            district_code,
+            ta_code,
+        )
+        time.sleep(delay_seconds)
 
     def _get_district_codes(self):
         # Malawi hierarchy: District = Location type R, TA = type D, GVH = type W, Village = type V.
