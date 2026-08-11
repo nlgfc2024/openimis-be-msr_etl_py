@@ -27,12 +27,3 @@ class MsrUbrLocationBatchGQLType(graphene.ObjectType):
 class MsrUbrLocationsGQLType(graphene.ObjectType):
     batches = graphene.List(MsrUbrLocationBatchGQLType)
     count = graphene.Int()
-
-
-class MsrUbrLocationInitialPullStatusGQLType(graphene.ObjectType):
-    request_id = graphene.String()
-    status = graphene.String()
-    message = graphene.String()
-    started_at = graphene.String()
-    finished_at = graphene.String()
-    updated_at = graphene.String()
