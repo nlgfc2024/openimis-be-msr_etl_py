@@ -4,10 +4,12 @@ from msr_etl.apps import MsrEtlConfig
 from msr_etl.gql_queries import (
     MsrEtlServiceGQLType,
     MsrEtlServicesListGQLType,
+    MsrEtlSyncUnitsGQLType,
     MsrUbrIndividualsGQLType,
     MsrUbrLocationBatchGQLType,
     MsrUbrLocationsGQLType,
 )
+from msr_etl.models import MsrEtlSyncUnit
 from msr_etl.gql_mutations import (
     MsrEtlServiceMutation,
     SaveMsrUbrIndividualsMutation,
@@ -55,6 +57,15 @@ class Query(graphene.ObjectType):
         ta=graphene.Argument(graphene.String, required=False),
         gvh=graphene.Argument(graphene.String, required=False),
         village=graphene.Argument(graphene.String, required=False),
+    )
+
+    msr_etl_sync_units = graphene.Field(
+        MsrEtlSyncUnitsGQLType,
+        job_uuid=graphene.Argument(graphene.String, required=True),
+        unit_type=graphene.Argument(graphene.String, required=False),
+        sync_status=graphene.Argument(graphene.String, required=False),
+        limit=graphene.Argument(graphene.Int, required=False, default_value=100),
+        offset=graphene.Argument(graphene.Int, required=False, default_value=0),
     )
 
     def _resolve_etl_services(parent, info, **kwargs):
@@ -156,6 +167,27 @@ class Query(graphene.ObjectType):
         return MsrUbrLocationsGQLType(
             batches=batches,
             count=sum(batch.count for batch in batches),
+        )
+
+    def resolve_msr_etl_sync_units(parent, info, **kwargs):
+        if not info.context.user.has_perms(MsrEtlConfig.gql_query_msr_etl_rule_perms):
+            raise PermissionError("Unauthorized")
+
+        qs = MsrEtlSyncUnit.objects.filter(job_uuid=kwargs.get("job_uuid"))
+        if kwargs.get("unit_type"):
+            qs = qs.filter(unit_type=kwargs["unit_type"])
+        if kwargs.get("sync_status"):
+            qs = qs.filter(sync_status=kwargs["sync_status"])
+
+        total_count = qs.count()
+        limit = kwargs.get("limit") or 100
+        offset = kwargs.get("offset") or 0
+        units = list(qs.order_by("unit_code", "id")[offset:offset + limit])
+
+        return MsrEtlSyncUnitsGQLType(
+            units=units,
+            count=len(units),
+            total_count=total_count,
         )
 
 
