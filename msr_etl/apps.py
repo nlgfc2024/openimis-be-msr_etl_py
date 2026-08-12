@@ -34,6 +34,11 @@ DEFAULT_CONFIG = {
 
     "gql_query_msr_etl_rule_perms": ["953001"],
     "gql_mutation_execute_msr_etl_rule_perms": ["953002"],
+
+    "staging_retention_hours": 48,
+    "sync_unit_max_attempts": 3,
+    "sync_sweep_interval_minutes": 5,
+    "job_stale_after_hours": 12,
 }
 
 
@@ -72,6 +77,11 @@ class MsrEtlConfig(AppConfig):
 
     gql_query_msr_etl_rule_perms = None
     gql_mutation_execute_msr_etl_rule_perms = None
+
+    staging_retention_hours = None
+    sync_unit_max_attempts = None
+    sync_sweep_interval_minutes = None
+    job_stale_after_hours = None
 
     @classmethod
     def _load_config(cls, cfg):
