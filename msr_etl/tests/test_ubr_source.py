@@ -1,3 +1,5 @@
+import io
+import json
 import logging
 from unittest.mock import patch, MagicMock
 
@@ -7,6 +9,11 @@ from msr_etl.apps import MsrEtlConfig
 from msr_etl.auth_provider import get_auth_provider
 from msr_etl.sources import UBRIndividualSource, UBRLocationSource
 import requests
+
+
+def mock_streamed_json_response(data, ok=True):
+    # fetch_households reads res.raw via json.load(), not res.json()
+    return MagicMock(ok=ok, raw=io.BytesIO(json.dumps(data).encode()))
 
 MOCKED_UBR_RESPONSE_DATA = [
     {
@@ -101,8 +108,8 @@ class UBRIndividualSourceTestCase(SimpleTestCase):
 
         # Mock the API responses for each TA.
         mock_post.side_effect = [
-            MagicMock(ok=True, json=MagicMock(return_value=self.mocked_ubr_response_data[0])),
-            MagicMock(ok=True, json=MagicMock(return_value=self.mocked_ubr_response_data[1])),
+            mock_streamed_json_response(self.mocked_ubr_response_data[0]),
+            mock_streamed_json_response(self.mocked_ubr_response_data[1]),
         ]
 
         source = UBRIndividualSource(
@@ -159,10 +166,7 @@ class UBRIndividualSourceTestCase(SimpleTestCase):
             return mock_qs
 
         mock_location_filter.side_effect = filter_side_effect
-        mock_post.return_value = MagicMock(
-            ok=True,
-            json=MagicMock(return_value=self.mocked_ubr_response_data[0])
-        )
+        mock_post.return_value = mock_streamed_json_response(self.mocked_ubr_response_data[0])
 
         source = UBRIndividualSource(
             get_auth_provider('noauth'),
@@ -217,6 +221,45 @@ class UBRIndividualSourceTestCase(SimpleTestCase):
             type="V",
             validity_to__isnull=True,
         )
+
+    def test_fetch_households_streams_and_closes_response(self):
+        source = UBRIndividualSource(get_auth_provider('noauth'))
+        session = MagicMock()
+        response = mock_streamed_json_response({
+            "error_occurred": False,
+            "targeting_data": [{"id": 1}],
+        })
+        session.post.return_value = response
+
+        rows = source.fetch_households(
+            session=session,
+            url=self.url,
+            headers=self.headers,
+            district_code="101",
+            ta_code="10101",
+        )
+
+        self.assertEqual(rows, [{"id": 1}])
+        self.assertTrue(session.post.call_args.kwargs["stream"])
+        self.assertTrue(response.raw.decode_content)
+        response.close.assert_called_once()
+
+    def test_fetch_households_closes_response_on_error(self):
+        source = UBRIndividualSource(get_auth_provider('noauth'))
+        session = MagicMock()
+        response = MagicMock(ok=False, status_code=502, reason="Bad Gateway")
+        session.post.return_value = response
+
+        with self.assertRaises(source.Error):
+            source.fetch_households(
+                session=session,
+                url=self.url,
+                headers=self.headers,
+                district_code="101",
+                ta_code="10101",
+            )
+
+        response.close.assert_called_once()
 
     def test_fetch_households_ssl_error_has_actionable_message(self):
         source = UBRIndividualSource(get_auth_provider('noauth'))
@@ -276,18 +319,18 @@ class UBRIndividualSourceTestCase(SimpleTestCase):
         location_qs.exists.return_value = True
         mock_location_filter.return_value = location_qs
         mock_post.side_effect = [
-            MagicMock(ok=True, json=MagicMock(return_value={
+            mock_streamed_json_response({
                 "error_occurred": False,
                 "targeting_data": [{"id": 1}, {"id": 2}],
-            })),
-            MagicMock(ok=True, json=MagicMock(return_value={
+            }),
+            mock_streamed_json_response({
                 "error_occurred": False,
                 "targeting_data": [{"id": 2}, {"id": 3}],
-            })),
-            MagicMock(ok=True, json=MagicMock(return_value={
+            }),
+            mock_streamed_json_response({
                 "error_occurred": False,
                 "targeting_data": [{"id": 4}],
-            })),
+            }),
         ]
 
         source = UBRIndividualSource(
@@ -331,10 +374,10 @@ class UBRIndividualSourceTestCase(SimpleTestCase):
         location_qs.exists.return_value = True
         mock_location_filter.return_value = location_qs
         mock_post.side_effect = [
-            MagicMock(ok=True, json=MagicMock(return_value={
+            mock_streamed_json_response({
                 "error_occurred": False,
                 "targeting_data": [{"id": 1}],
-            })),
+            }),
             requests.exceptions.ReadTimeout("UBR read timed out"),
         ]
         source = UBRIndividualSource(

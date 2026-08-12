@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import requests
@@ -377,13 +378,20 @@ class UBRIndividualSource(DataSource):
             url,
             headers,
             params=params,
+            stream=True,
         )
 
-        if not res.ok:
-            logger.error("HTTP Request failed: %s %s", res.status_code, res.reason)
-            raise self.Error(f"HTTP request failed: {res.status_code}: {res.reason}")
+        try:
+            if not res.ok:
+                logger.error("HTTP Request failed: %s %s", res.status_code, res.reason)
+                raise self.Error(f"HTTP request failed: {res.status_code}: {res.reason}")
 
-        body = res.json()
+            # stream=True + json.load(res.raw) parses straight off the socket,
+            # skipping the extra full-body .content/.text copies res.json() makes
+            res.raw.decode_content = True
+            body = json.load(res.raw)
+        finally:
+            res.close()
 
         if body.get("error_occurred", False):
             logger.error(f"Error in response: {body.get('error_message')}")
