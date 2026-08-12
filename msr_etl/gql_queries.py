@@ -27,3 +27,23 @@ class MsrUbrLocationBatchGQLType(graphene.ObjectType):
 class MsrUbrLocationsGQLType(graphene.ObjectType):
     batches = graphene.List(MsrUbrLocationBatchGQLType)
     count = graphene.Int()
+
+
+class MsrEtlSyncUnitGQLType(graphene.ObjectType):
+    # raw_payload is intentionally never projected
+    id = graphene.Int()
+    unit_type = graphene.String()
+    unit_code = graphene.String()
+    stage_status = graphene.String()
+    sync_status = graphene.String()
+    record_count = graphene.Int()
+    error_detail = graphene.String()
+    attempts = graphene.Int()
+    created_at = graphene.DateTime()
+    updated_at = graphene.DateTime()
+
+
+class MsrEtlSyncUnitsGQLType(graphene.ObjectType):
+    units = graphene.List(MsrEtlSyncUnitGQLType)
+    count = graphene.Int()
+    total_count = graphene.Int()
