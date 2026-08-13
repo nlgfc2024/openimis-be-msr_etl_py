@@ -69,8 +69,26 @@ class RunUbrLocationsImportTestCase(SimpleTestCase):
 
         run_ubr_locations_import(self.reporter)
 
-        mock_enumerate.assert_called_once_with("the-user")
+        mock_enumerate.assert_called_once_with("the-user", {})
         self.reporter.set_total.assert_called_once_with(4)
         self.assertEqual(mock_stage.call_count, 2)
         mock_sync.assert_called_once_with("job-uuid", reporter=self.reporter, user="the-user")
         self.reporter.succeed.assert_called_once()
+
+    @patch("msr_etl.jobs.sync_staged_units")
+    @patch("msr_etl.jobs.stage_location_unit", return_value=True)
+    @patch("msr_etl.jobs.enumerate_location_units")
+    @patch("msr_etl.jobs.job_has_failed_units", return_value=False)
+    def test_stages_scoped_units_then_syncs_and_succeeds(
+        self, mock_has_failed, mock_enumerate, mock_stage, mock_sync,
+    ):
+        units = [{"district": "101", "unit_type": "GVH"}]
+        mock_enumerate.return_value = ("source", units)
+
+        run_ubr_locations_import(self.reporter, district="101", ta="10101", gvh="1010101")
+
+        mock_enumerate.assert_called_once_with(
+            "the-user", {"district": "101", "ta": "10101", "gvh": "1010101"},
+        )
+        self.reporter.set_total.assert_called_once_with(2)
+        self.assertEqual(mock_stage.call_count, 1)
