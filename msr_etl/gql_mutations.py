@@ -17,7 +17,7 @@ from msr_etl.apps import MsrEtlConfig
 from core.gql.gql_mutations.base_mutation import BaseMutation
 from core.schema import OpenIMISMutation
 from msr_etl.sinks import IndividualImportSink, LocationImportSink
-from msr_etl.services import UBRIndividualService
+from msr_etl.services import UBRIndividualService, UBRLocationService
 from msr_etl.sources import UBRLocationSource
 from core.services import run_as_scheduled_job
 
@@ -245,13 +245,17 @@ class SaveMsrUbrLocationsMutation(BaseMutation):
 
 
 class ScheduleMsrUbrLocationsImportMutation(BaseMutation):
-    """Schedules a background job that performs a full UBR location import."""
+    """Schedules a background job that imports UBR locations, optionally
+    scoped to a district/ta/gvh/village; unscoped runs the full country."""
 
     _mutation_class = "ScheduleMsrUbrLocationsImportMutation"
     _mutation_module = "msr_etl"
 
     class Input(OpenIMISMutation.Input):
-        pass
+        district = graphene.String(required=False)
+        ta = graphene.String(required=False)
+        gvh = graphene.String(required=False)
+        village = graphene.String(required=False)
 
     @classmethod
     def _validate_mutation(cls, user, **data):
@@ -264,13 +268,19 @@ class ScheduleMsrUbrLocationsImportMutation(BaseMutation):
         try:
             client_mutation_id = data.pop('client_mutation_id', None)
             data.pop('client_mutation_label', None)
+            service_kwargs = MsrEtlServiceMutation._get_supported_service_kwargs(
+                UBRLocationService,
+                data,
+            )
+            # constructed only to validate inputs (e.g. gvh without ta) - no UBR call yet
+            UBRLocationService(user, **service_kwargs)
 
             run_as_scheduled_job(
                 "msr_etl.jobs.run_ubr_locations_import",
                 module="msr_etl",
                 job_type="ubr_locations_import",
                 user=user,
-                params={},
+                params=service_kwargs,
                 client_mutation_id=client_mutation_id,
             )
             return None

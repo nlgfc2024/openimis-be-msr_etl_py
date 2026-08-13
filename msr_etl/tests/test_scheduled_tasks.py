@@ -13,6 +13,9 @@ from msr_etl.scheduled_tasks import (
     sweep_sync_units,
 )
 
+# comfortably past the default sync_orphan_grace_minutes (10)
+STALE_MINUTES_AGO = 15
+
 
 class ScheduleTasksTestCase(TestCase):
 
@@ -30,13 +33,19 @@ class SweepSyncUnitsTestCase(TestCase):
     def setUpTestData(cls):
         cls.user = create_test_interactive_user(username="sweep_tester")
 
-    def _create_job(self, **kwargs):
+    def _create_job(self, idle_minutes_ago=None, **kwargs):
         defaults = dict(module="msr_etl", job_type="ubr_individuals_import", task="x.y", user=self.user)
         defaults.update(kwargs)
-        return AsyncJob.objects.create(**defaults)
+        job = AsyncJob.objects.create(**defaults)
+        if idle_minutes_ago is not None:
+            AsyncJob.objects.filter(id=job.id).update(
+                updated_at=timezone.now() - timedelta(minutes=idle_minutes_ago)
+            )
+            job.refresh_from_db()
+        return job
 
-    def test_requeues_failed_units_below_max_attempts(self):
-        job = self._create_job()
+    def test_requeues_failed_units_below_max_attempts_for_an_idle_job(self):
+        job = self._create_job(idle_minutes_ago=STALE_MINUTES_AGO)
         below_cap = MsrEtlSyncUnit.objects.create(
             job_uuid=job.id, unit_type=MsrEtlSyncUnit.UnitType.PERCENTILE_CHUNK, unit_code="101:10101:0-9",
             stage_status=MsrEtlSyncUnit.Status.STAGED, sync_status=MsrEtlSyncUnit.Status.FAILED, attempts=1,
@@ -55,8 +64,23 @@ class SweepSyncUnitsTestCase(TestCase):
         self.assertEqual(at_cap.sync_status, MsrEtlSyncUnit.Status.FAILED)
 
     @patch("msr_etl.scheduled_tasks.sync_staged_units")
-    def test_syncs_orphaned_units_with_a_reconstructed_reporter(self, mock_sync):
-        job = self._create_job(status=AsyncJob.Status.RUNNING, total=4, processed=1)
+    def test_does_not_requeue_failed_units_for_a_still_live_job(self, mock_sync):
+        # updated_at fresh (default from creation) - as if the job's own
+        # reporter just wrote to it, not a crash
+        job = self._create_job()
+        failed_unit = MsrEtlSyncUnit.objects.create(
+            job_uuid=job.id, unit_type=MsrEtlSyncUnit.UnitType.PERCENTILE_CHUNK, unit_code="101:10101:0-9",
+            stage_status=MsrEtlSyncUnit.Status.STAGED, sync_status=MsrEtlSyncUnit.Status.FAILED, attempts=1,
+        )
+
+        sweep_sync_units()
+
+        failed_unit.refresh_from_db()
+        self.assertEqual(failed_unit.sync_status, MsrEtlSyncUnit.Status.FAILED)
+
+    @patch("msr_etl.scheduled_tasks.sync_staged_units")
+    def test_syncs_orphaned_units_for_an_idle_job_with_a_reconstructed_reporter(self, mock_sync):
+        job = self._create_job(idle_minutes_ago=STALE_MINUTES_AGO, status=AsyncJob.Status.RUNNING, total=4, processed=1)
         MsrEtlSyncUnit.objects.create(
             job_uuid=job.id, unit_type=MsrEtlSyncUnit.UnitType.PERCENTILE_CHUNK, unit_code="101:10101:0-9",
             stage_status=MsrEtlSyncUnit.Status.STAGED, sync_status=MsrEtlSyncUnit.Status.PENDING,
@@ -71,8 +95,23 @@ class SweepSyncUnitsTestCase(TestCase):
         self.assertEqual(kwargs["user"], self.user)
 
     @patch("msr_etl.scheduled_tasks.sync_staged_units")
+    def test_does_not_sync_orphaned_units_for_a_still_live_job(self, mock_sync):
+        # this is the exact bug found live: a job still in its staging phase
+        # has staged-but-unsynced units that look identical to a crash's
+        # leftovers unless the job's own idleness is checked first
+        job = self._create_job(status=AsyncJob.Status.RUNNING, total=256, processed=90)
+        MsrEtlSyncUnit.objects.create(
+            job_uuid=job.id, unit_type=MsrEtlSyncUnit.UnitType.DISTRICT, unit_code="101",
+            stage_status=MsrEtlSyncUnit.Status.STAGED, sync_status=MsrEtlSyncUnit.Status.PENDING,
+        )
+
+        sweep_sync_units()
+
+        mock_sync.assert_not_called()
+
+    @patch("msr_etl.scheduled_tasks.sync_staged_units")
     def test_skips_reporter_when_job_total_never_set(self, mock_sync):
-        job = self._create_job(status=AsyncJob.Status.RUNNING)
+        job = self._create_job(idle_minutes_ago=STALE_MINUTES_AGO, status=AsyncJob.Status.RUNNING)
         MsrEtlSyncUnit.objects.create(
             job_uuid=job.id, unit_type=MsrEtlSyncUnit.UnitType.PERCENTILE_CHUNK, unit_code="101:10101:0-9",
             stage_status=MsrEtlSyncUnit.Status.STAGED, sync_status=MsrEtlSyncUnit.Status.PENDING,

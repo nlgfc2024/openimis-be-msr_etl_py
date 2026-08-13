@@ -93,10 +93,11 @@ def stage_individual_unit(job_uuid, source, unit):
         return False
 
 
-def enumerate_location_units(user):
+def enumerate_location_units(user, params=None):
     """District list comes from UBR itself (it is the data being imported);
-    everything below it is district x level."""
-    source = UBRLocationService(user).source
+    everything below it is district x level. When params scope to a single
+    district, list_districts() returns just that one - no change needed here."""
+    source = UBRLocationService(user, **(params or {})).source
     district_rows = source.list_districts()
     units = []
     for row in district_rows:

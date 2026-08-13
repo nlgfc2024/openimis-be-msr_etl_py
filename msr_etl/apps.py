@@ -38,6 +38,7 @@ DEFAULT_CONFIG = {
     "staging_retention_hours": 48,
     "sync_unit_max_attempts": 3,
     "sync_sweep_interval_minutes": 5,
+    "sync_orphan_grace_minutes": 10,
     "job_stale_after_hours": 12,
 }
 
@@ -81,6 +82,7 @@ class MsrEtlConfig(AppConfig):
     staging_retention_hours = None
     sync_unit_max_attempts = None
     sync_sweep_interval_minutes = None
+    sync_orphan_grace_minutes = None
     job_stale_after_hours = None
 
     @classmethod

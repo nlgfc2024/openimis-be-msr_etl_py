@@ -35,33 +35,56 @@ def schedule_tasks(scheduler):
 
 
 def sweep_sync_units():
-    """Crash recovery only. select_for_update(skip_locked=True) in
-    sync_staged_units makes this safe to run alongside a still-live job."""
-    _requeue_retryable_failed_units()
-    _sync_orphaned_units()
+    """Crash recovery only. A job that's merely still staging looks
+    identical to a crashed one by unit status alone, so eligibility is
+    gated on the job itself going idle - see _stale_job_uuids."""
+    stale_job_uuids = _stale_job_uuids()
+    _requeue_retryable_failed_units(stale_job_uuids)
+    _sync_orphaned_units(stale_job_uuids)
     _close_completed_jobs()
     _fail_stale_jobs()
 
 
-def _requeue_retryable_failed_units():
+def _stale_job_uuids():
+    """A live run's own reporter keeps updated_at fresh on every unit, so
+    only jobs idle past sync_orphan_grace_minutes are genuinely orphaned -
+    without this, sweeping a still-running job spins up a second
+    ProgressReporter and the two writers race on processed/metrics."""
+    grace_minutes = int(MsrEtlConfig.sync_orphan_grace_minutes)
+    stale_cutoff = timezone.now() - timedelta(minutes=grace_minutes)
+    candidate_job_uuids = list(
+        MsrEtlSyncUnit.objects
+        .filter(
+            stage_status=MsrEtlSyncUnit.Status.STAGED,
+            sync_status__in=[MsrEtlSyncUnit.Status.PENDING, MsrEtlSyncUnit.Status.FAILED],
+        )
+        .values_list("job_uuid", flat=True)
+        .distinct()
+    )
+    if not candidate_job_uuids:
+        return set()
+    return set(
+        AsyncJob.objects.filter(id__in=candidate_job_uuids, updated_at__lt=stale_cutoff)
+        .values_list("id", flat=True)
+    )
+
+
+def _requeue_retryable_failed_units(stale_job_uuids):
+    if not stale_job_uuids:
+        return
     max_attempts = int(MsrEtlConfig.sync_unit_max_attempts)
     MsrEtlSyncUnit.objects.filter(
+        job_uuid__in=stale_job_uuids,
         stage_status=MsrEtlSyncUnit.Status.STAGED,
         sync_status=MsrEtlSyncUnit.Status.FAILED,
         attempts__lt=max_attempts,
     ).update(sync_status=MsrEtlSyncUnit.Status.PENDING, updated_at=timezone.now())
 
 
-def _sync_orphaned_units():
+def _sync_orphaned_units(stale_job_uuids):
     """Reconstructs a ProgressReporter per job so retried units still
     advance processed/metrics, which _close_completed_jobs relies on."""
-    job_uuids = (
-        MsrEtlSyncUnit.objects
-        .filter(stage_status=MsrEtlSyncUnit.Status.STAGED, sync_status=MsrEtlSyncUnit.Status.PENDING)
-        .values_list("job_uuid", flat=True)
-        .distinct()
-    )
-    for job_uuid in job_uuids:
+    for job_uuid in stale_job_uuids:
         job = AsyncJob.objects.filter(id=job_uuid).first()
         if job is None:
             continue

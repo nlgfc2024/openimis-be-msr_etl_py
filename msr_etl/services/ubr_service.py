@@ -65,11 +65,27 @@ class UBRLocationService(MsrETLService):
 
     def __init__(self,
                  user: User,
+                 district: str = None,
+                 ta: str = None,
+                 gvh: str = None,
+                 village: str = None,
                  source: DataSource = None,
                  adapter: DataAdapter = None,
                  sink: DataSink = None):
+        if village and not gvh:
+            raise ValueError("gvh is required when village is provided")
+        if gvh and not ta:
+            raise ValueError("ta is required when gvh is provided")
+        if ta and not district:
+            raise ValueError("district is required when ta is provided")
+
         super().__init__(
-            source=source or UBRLocationSource(),
+            source=source or UBRLocationSource(
+                district=district,
+                ta=ta,
+                gvh=gvh,
+                village=village,
+            ),
             adapter=adapter or UBRLocationAdapter(),
             sink=sink or LocationImportSink(user)
         )
