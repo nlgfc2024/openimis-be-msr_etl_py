@@ -41,6 +41,7 @@ class EnumerateLocationUnitsTestCase(SimpleTestCase):
             {"geo_location_code": "101", "geo_location_name": "Chitipa"},
             {"geo_location_code": "102", "geo_location_name": "Karonga"},
         ]
+        source.fetch_unit.return_value = {"data_type": "T", "data": [{"geo_location_code": "10101"}]}
         mock_service_class.return_value.source = source
 
         returned_source, units = enumerate_location_units("user")
@@ -57,6 +58,9 @@ class EnumerateLocationUnitsTestCase(SimpleTestCase):
                 MsrEtlSyncUnit.UnitType.VILLAGE,
             ],
         )
+        # TA unit reuses the payload fetched to decide whether to skip the district
+        ta_unit = next(u for u in units if u["district"] == "101" and u["unit_type"] == MsrEtlSyncUnit.UnitType.TA)
+        self.assertEqual(ta_unit["payload"], source.fetch_unit.return_value)
 
     @patch("msr_etl.staging.UBRLocationService")
     def test_skips_district_row_missing_code(self, mock_service_class):
@@ -67,6 +71,27 @@ class EnumerateLocationUnitsTestCase(SimpleTestCase):
         _, units = enumerate_location_units("user")
 
         self.assertEqual(units, [])
+        source.fetch_unit.assert_not_called()
+
+    @patch("msr_etl.staging.UBRLocationService")
+    def test_skips_district_with_no_tas(self, mock_service_class):
+        source = MagicMock()
+        source.list_districts.return_value = [
+            {"geo_location_code": "101", "geo_location_name": "Chitipa"},
+            {"geo_location_code": "102", "geo_location_name": "Karonga"},
+        ]
+
+        def fetch_unit(district_code, unit_type):
+            if district_code == "101":
+                return {"data_type": "T", "data": []}
+            return {"data_type": "T", "data": [{"geo_location_code": "10201"}]}
+
+        source.fetch_unit.side_effect = fetch_unit
+        mock_service_class.return_value.source = source
+
+        _, units = enumerate_location_units("user")
+
+        self.assertEqual([u["district"] for u in units], ["102", "102", "102", "102"])
 
 
 class StageIndividualUnitTestCase(TestCase):
@@ -147,15 +172,27 @@ class StageLocationUnitTestCase(TestCase):
         sync_unit = MsrEtlSyncUnit.objects.get(job_uuid=self.job_uuid, unit_type=MsrEtlSyncUnit.UnitType.DISTRICT)
         self.assertEqual(sync_unit.record_count, 1)
 
-    def test_ta_unit_fetches_from_source(self):
+    def test_ta_unit_reuses_enumeration_payload_without_fetching(self):
         source = MagicMock()
-        source.fetch_unit.return_value = {"data_type": "T", "data": [{"geo_location_code": "10101"}]}
-        unit = {"district": "101", "unit_type": MsrEtlSyncUnit.UnitType.TA}
+        payload = {"data_type": "T", "data": [{"geo_location_code": "10101"}]}
+        unit = {"district": "101", "unit_type": MsrEtlSyncUnit.UnitType.TA, "payload": payload}
 
         result = stage_location_unit(self.job_uuid, source, unit)
 
         self.assertTrue(result)
-        source.fetch_unit.assert_called_once_with("101", MsrEtlSyncUnit.UnitType.TA)
+        source.fetch_unit.assert_not_called()
+        sync_unit = MsrEtlSyncUnit.objects.get(job_uuid=self.job_uuid, unit_type=MsrEtlSyncUnit.UnitType.TA)
+        self.assertEqual(sync_unit.record_count, 1)
+
+    def test_gvh_unit_fetches_from_source(self):
+        source = MagicMock()
+        source.fetch_unit.return_value = {"data_type": "G", "data": [{"geo_location_code": "1010101"}]}
+        unit = {"district": "101", "unit_type": MsrEtlSyncUnit.UnitType.GVH}
+
+        result = stage_location_unit(self.job_uuid, source, unit)
+
+        self.assertTrue(result)
+        source.fetch_unit.assert_called_once_with("101", MsrEtlSyncUnit.UnitType.GVH)
 
     def test_marks_failed_on_fetch_error(self):
         source = MagicMock()

@@ -592,3 +592,81 @@ class UBRLocationSourceTestCase(TestCase):
             requested_params,
         )
         mock_sleep.assert_called_once_with(30)
+
+    def test_list_districts_scoped_skips_api_call(self):
+        source = UBRLocationSource(get_auth_provider("noauth"), district="101")
+
+        with patch("requests.Session.post") as mock_post:
+            districts = source.list_districts()
+
+        mock_post.assert_not_called()
+        self.assertEqual(districts, [{"geo_location_code": "101"}])
+
+    @patch("requests.Session.post")
+    def test_list_districts_unscoped_fetches_all(self, mock_post):
+        mock_post.return_value = MagicMock(ok=True, json=MagicMock(return_value=self.mocked_districts_response))
+        source = UBRLocationSource(get_auth_provider("noauth"))
+
+        districts = source.list_districts()
+
+        self.assertEqual(len(districts), 2)
+
+    @patch("requests.Session.post")
+    def test_fetch_unit_narrows_ta_by_scope(self, mock_post):
+        mock_post.return_value = MagicMock(ok=True, json=MagicMock(return_value=self.mocked_tas_response[0]))
+        source = UBRLocationSource(get_auth_provider("noauth"), district="101", ta="10102")
+
+        result = source.fetch_unit("101", "TA")
+
+        self.assertEqual([row["geo_location_code"] for row in result["data"]], ["10102"])
+
+    @patch("requests.Session.post")
+    def test_fetch_unit_narrows_gvh_by_ta_and_gvh_scope(self, mock_post):
+        mock_post.return_value = MagicMock(ok=True, json=MagicMock(return_value=self.mocked_gvhs_response[0]))
+        source = UBRLocationSource(get_auth_provider("noauth"), district="101", ta="10101", gvh="1010102")
+
+        result = source.fetch_unit("101", "GVH")
+
+        self.assertEqual([row["geo_location_code"] for row in result["data"]], ["1010102"])
+
+    @patch("requests.Session.post")
+    def test_fetch_unit_ta_scope_does_not_narrow_gvh(self, mock_post):
+        mock_post.return_value = MagicMock(ok=True, json=MagicMock(return_value=self.mocked_gvhs_response[0]))
+        source = UBRLocationSource(get_auth_provider("noauth"), district="101", ta="10101")
+
+        result = source.fetch_unit("101", "GVH")
+
+        self.assertEqual(len(result["data"]), 2)
+
+    @patch("requests.Session.post")
+    def test_fetch_unit_narrows_village_by_ta_prefix_without_gvh(self, mock_post):
+        mock_post.return_value = MagicMock(ok=True, json=MagicMock(return_value=self.mocked_villages_response[0]))
+        source = UBRLocationSource(get_auth_provider("noauth"), district="101", ta="10101")
+
+        result = source.fetch_unit("101", "VILLAGE")
+
+        self.assertEqual(len(result["data"]), 2)
+
+        other_ta_source = UBRLocationSource(get_auth_provider("noauth"), district="101", ta="10102")
+        other_result = other_ta_source.fetch_unit("101", "VILLAGE")
+        self.assertEqual(other_result["data"], [])
+
+    @patch("requests.Session.post")
+    def test_fetch_unit_narrows_village_by_gvh_scope(self, mock_post):
+        mock_post.return_value = MagicMock(ok=True, json=MagicMock(return_value=self.mocked_villages_response[0]))
+        source = UBRLocationSource(get_auth_provider("noauth"), district="101", ta="10101", gvh="does-not-match")
+
+        result = source.fetch_unit("101", "VILLAGE")
+
+        self.assertEqual(result["data"], [])
+
+    @patch("requests.Session.post")
+    def test_fetch_unit_narrows_village_by_village_scope(self, mock_post):
+        mock_post.return_value = MagicMock(ok=True, json=MagicMock(return_value=self.mocked_villages_response[0]))
+        source = UBRLocationSource(
+            get_auth_provider("noauth"), district="101", ta="10101", gvh="10101", village="101010102",
+        )
+
+        result = source.fetch_unit("101", "VILLAGE")
+
+        self.assertEqual([row["geo_location_code"] for row in result["data"]], ["101010102"])

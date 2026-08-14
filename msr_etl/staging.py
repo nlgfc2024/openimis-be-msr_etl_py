@@ -93,10 +93,8 @@ def stage_individual_unit(job_uuid, source, unit):
         return False
 
 
-def enumerate_location_units(user):
-    """District list comes from UBR itself (it is the data being imported);
-    everything below it is district x level."""
-    source = UBRLocationService(user).source
+def enumerate_location_units(user, params=None):
+    source = UBRLocationService(user, **(params or {})).source
     district_rows = source.list_districts()
     units = []
     for row in district_rows:
@@ -104,13 +102,23 @@ def enumerate_location_units(user):
         if not district_code:
             logger.warning("Skipping district row with no geo_location_code")
             continue
+
+        ta_payload = source.fetch_unit(district_code, MsrEtlSyncUnit.UnitType.TA)
+        if not ta_payload.get("data"):
+            logger.warning("Skipping district %s because UBR returned no TAs", district_code)
+            continue
+
         units.append({
             "district": district_code,
             "unit_type": MsrEtlSyncUnit.UnitType.DISTRICT,
             "payload": {"data_type": "D", "data": [row]},
         })
+        units.append({
+            "district": district_code,
+            "unit_type": MsrEtlSyncUnit.UnitType.TA,
+            "payload": ta_payload,
+        })
         for unit_type in (
-            MsrEtlSyncUnit.UnitType.TA,
             MsrEtlSyncUnit.UnitType.GVH,
             MsrEtlSyncUnit.UnitType.VILLAGE,
         ):
@@ -119,15 +127,13 @@ def enumerate_location_units(user):
 
 
 def stage_location_unit(job_uuid, source, unit):
-    """District rows reuse the payload already fetched during enumeration;
-    TA/GVH/Village each make their own per-district UBR call."""
     sync_unit = MsrEtlSyncUnit.objects.create(
         job_uuid=job_uuid,
         unit_type=unit["unit_type"],
         unit_code=unit["district"],
     )
     try:
-        if unit["unit_type"] == MsrEtlSyncUnit.UnitType.DISTRICT:
+        if unit["unit_type"] in (MsrEtlSyncUnit.UnitType.DISTRICT, MsrEtlSyncUnit.UnitType.TA):
             payload = unit["payload"]
         else:
             payload = source.fetch_unit(unit["district"], unit["unit_type"])

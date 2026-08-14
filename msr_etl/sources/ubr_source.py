@@ -646,10 +646,18 @@ class UBRLocationSource(DataSource):
     def __init__(
         self,
         auth_provider: AuthProvider = None,
+        district: str = None,
+        ta: str = None,
+        gvh: str = None,
+        village: str = None,
     ):
         super().__init__()
 
         self.auth_provider = auth_provider or get_auth_provider()
+        self.district = district
+        self.ta = ta
+        self.gvh = gvh
+        self.village = village
 
     def pull(self):
         headers = {
@@ -716,7 +724,11 @@ class UBRLocationSource(DataSource):
 
     def list_districts(self):
         """One-off global fetch for staging enumeration: the district set is
-        itself UBR data being imported, so it cannot come from local Location."""
+        itself UBR data being imported, so it cannot come from local Location.
+        Scoped to self.district, this is just that one district - no UBR call."""
+        if self.district:
+            return [{"geo_location_code": self.district}]
+
         headers = {
             **MsrEtlConfig.source_headers,
             **self.auth_provider.get_auth_header(),
@@ -728,7 +740,8 @@ class UBRLocationSource(DataSource):
         )
 
     def fetch_unit(self, district_code, unit_type):
-        """Fetch one TA/GVH/Village batch for a district, for staging."""
+        """Fetch one TA/GVH/Village batch for a district, narrowed by any
+        ta/gvh/village scope set on this source, for staging."""
         headers = {
             **MsrEtlConfig.source_headers,
             **self.auth_provider.get_auth_header(),
@@ -741,7 +754,36 @@ class UBRLocationSource(DataSource):
             {"geo_location_type_id": geo_location_type_id, "district_code": district_code},
             unit_type.lower(),
         )
+        rows = self._narrow_unit_rows(unit_type, rows)
         return {"data_type": _LOCATION_UNIT_DATA_TYPE[unit_type], "data": rows}
+
+    def _narrow_unit_rows(self, unit_type, rows):
+        """Apply this source's ta/gvh/village scope to a fetched batch, the
+        same parent/code filtering `fetch()` already does for its preview."""
+        if unit_type == "TA":
+            if self.ta:
+                rows = [row for row in rows if row.get("geo_location_code") == self.ta]
+            return rows
+
+        if unit_type == "GVH":
+            if self.ta:
+                rows = [row for row in rows if row.get("parent_geo_location_code") == self.ta]
+            if self.gvh:
+                rows = [row for row in rows if row.get("geo_location_code") == self.gvh]
+            return rows
+
+        if unit_type == "VILLAGE":
+            if self.gvh:
+                rows = [row for row in rows if row.get("parent_geo_location_code") == self.gvh]
+            elif self.ta:
+                # no gvh chosen yet - narrow by TA via the code prefix, same
+                # convention fetch() uses to derive ancestors from a code
+                rows = [row for row in rows if str(row.get("geo_location_code") or "")[:5] == self.ta]
+            if self.village:
+                rows = [row for row in rows if row.get("geo_location_code") == self.village]
+            return rows
+
+        return rows
 
     def fetch(self, district: str = None, ta: str = None, gvh: str = None, village: str = None):
         headers = {

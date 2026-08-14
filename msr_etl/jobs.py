@@ -21,9 +21,9 @@ def run_ubr_individuals_import(reporter, **params):
     _finish(reporter)
 
 
-def run_ubr_locations_import(reporter):
+def run_ubr_locations_import(reporter, **params):
     user = reporter.job.user
-    source, units = enumerate_location_units(user)
+    source, units = enumerate_location_units(user, params)
     reporter.set_total(2 * len(units))
     for unit in units:
         staged = stage_location_unit(reporter.job.id, source, unit)
