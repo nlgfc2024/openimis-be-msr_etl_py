@@ -34,8 +34,9 @@ class Query(graphene.ObjectType):
 
     msr_ubr_individuals = graphene.Field(
         MsrUbrIndividualsGQLType,
-        district=graphene.Argument(graphene.String, required=False),
-        ta=graphene.Argument(graphene.String, required=False),
+        district=graphene.Argument(graphene.String, required=True),
+        ta=graphene.Argument(graphene.String, required=True),
+        gvh=graphene.Argument(graphene.String, required=False),
         village=graphene.Argument(graphene.String, required=False),
         lower_percentile_category=graphene.Argument(graphene.Int, required=False),
         upper_percentile_category=graphene.Argument(graphene.Int, required=False),
@@ -118,6 +119,7 @@ class Query(graphene.ObjectType):
         source = UBRIndividualSource(
             district=kwargs.get("district"),
             ta=kwargs.get("ta"),
+            gvh=kwargs.get("gvh"),
             village=kwargs.get("village"),
             pmt_percentile_range=pmt_percentile_range,
             wealth_quintiles=wealth_quintiles,

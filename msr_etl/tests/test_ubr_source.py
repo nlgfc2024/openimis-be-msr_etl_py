@@ -1,8 +1,9 @@
 import logging
 from unittest.mock import patch, MagicMock
 
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 
+from msr_etl.apps import MsrEtlConfig
 from msr_etl.auth_provider import get_auth_provider
 from msr_etl.sources import UBRIndividualSource, UBRLocationSource
 import requests
@@ -24,7 +25,7 @@ MOCKED_UBR_RESPONSE_DATA = [
 ]
 
 
-class UBRIndividualSourceTestCase(TestCase):
+class UBRIndividualSourceTestCase(SimpleTestCase):
 
     @classmethod
     def setUpClass(cls):
@@ -77,12 +78,12 @@ class UBRIndividualSourceTestCase(TestCase):
         """
         # Setup the filter mock to return different codes based on the filter arguments
         def filter_side_effect(*args, **kwargs):
-            if kwargs.get("type") == "D":
+            if kwargs.get("type") == "R":
                 # Districts
                 mock_qs = MagicMock()
                 mock_qs.values_list.return_value = self.mocked_district_codes
                 return mock_qs
-            elif kwargs.get("type") == "W":
+            elif kwargs.get("type") == "D":
                 # TAs for district
                 mock_qs = MagicMock()
                 mock_qs.values_list.return_value = self.mocked_ta_codes
@@ -155,7 +156,6 @@ class UBRIndividualSourceTestCase(TestCase):
         def filter_side_effect(*args, **kwargs):
             mock_qs = MagicMock()
             mock_qs.exists.return_value = True
-            mock_qs.values_list.return_value = []
             return mock_qs
 
         mock_location_filter.side_effect = filter_side_effect
@@ -169,6 +169,7 @@ class UBRIndividualSourceTestCase(TestCase):
             pmt_percentile_range=range(1, 3),
             district="101",
             ta="10101",
+            gvh="1010101",
             village="10101001",
             wealth_quintiles=[2, 5],
             classification=[3],
@@ -187,6 +188,7 @@ class UBRIndividualSourceTestCase(TestCase):
         _, kwargs = mock_post.call_args
         self.assertEqual(kwargs["params"]["district_code"], "101")
         self.assertEqual(kwargs["params"]["traditional_authority_code"], "10101")
+        self.assertEqual(kwargs["params"]["group_village_head_code"], "1010101")
         self.assertEqual(kwargs["params"]["village_code"], "10101001")
         self.assertEqual(kwargs["params"]["lower_percentile_category"], "1")
         self.assertEqual(kwargs["params"]["upper_percentile_category"], "2")
@@ -196,6 +198,25 @@ class UBRIndividualSourceTestCase(TestCase):
         self.assertEqual(kwargs["params"]["maxAge"], "17")
         self.assertEqual(len(pulled_data), 1)
         self.assertTrue(identifiers[0].startswith("batch_101_10101_"))
+        mock_location_filter.assert_any_call(
+            code="1010101",
+            parent__code="10101",
+            parent__type="D",
+            parent__validity_to__isnull=True,
+            type="W",
+            validity_to__isnull=True,
+        )
+        mock_location_filter.assert_any_call(
+            code="10101001",
+            parent__code="1010101",
+            parent__parent__code="10101",
+            parent__parent__type="D",
+            parent__parent__validity_to__isnull=True,
+            parent__type="W",
+            parent__validity_to__isnull=True,
+            type="V",
+            validity_to__isnull=True,
+        )
 
     def test_fetch_households_ssl_error_has_actionable_message(self):
         source = UBRIndividualSource(get_auth_provider('noauth'))
@@ -213,6 +234,121 @@ class UBRIndividualSourceTestCase(TestCase):
                 district_code="101",
                 ta_code="10101",
             )
+
+    @patch.object(MsrEtlConfig, "source_percentile_chunk_size", 10)
+    def test_percentile_chunks_are_inclusive_and_non_overlapping(self):
+        source = UBRIndividualSource(
+            get_auth_provider('noauth'),
+            pmt_percentile_range=range(0, 101),
+        )
+
+        chunks = [
+            (chunk.start, chunk.stop - 1)
+            for chunk in source._iter_percentile_chunks()
+        ]
+
+        self.assertEqual(chunks, [
+            (0, 9),
+            (10, 19),
+            (20, 29),
+            (30, 39),
+            (40, 49),
+            (50, 59),
+            (60, 69),
+            (70, 79),
+            (80, 89),
+            (90, 99),
+            (100, 100),
+        ])
+
+    @patch.object(MsrEtlConfig, "source_percentile_chunk_delay_seconds", 0)
+    @patch.object(MsrEtlConfig, "source_percentile_chunk_size", 10)
+    @patch("time.sleep")
+    @patch("requests.Session.post")
+    @patch("location.models.Location.objects.filter")
+    def test_pull_streams_chunks_and_deduplicates_households(
+        self,
+        mock_location_filter,
+        mock_post,
+        mock_sleep,
+    ):
+        location_qs = MagicMock()
+        location_qs.exists.return_value = True
+        mock_location_filter.return_value = location_qs
+        mock_post.side_effect = [
+            MagicMock(ok=True, json=MagicMock(return_value={
+                "error_occurred": False,
+                "targeting_data": [{"id": 1}, {"id": 2}],
+            })),
+            MagicMock(ok=True, json=MagicMock(return_value={
+                "error_occurred": False,
+                "targeting_data": [{"id": 2}, {"id": 3}],
+            })),
+            MagicMock(ok=True, json=MagicMock(return_value={
+                "error_occurred": False,
+                "targeting_data": [{"id": 4}],
+            })),
+        ]
+
+        source = UBRIndividualSource(
+            get_auth_provider('noauth'),
+            pmt_percentile_range=range(0, 21),
+            district="101",
+            ta="10101",
+        )
+
+        results = list(source.pull())
+
+        self.assertEqual(
+            [[row["id"] for row in rows] for rows, _ in results],
+            [[1, 2], [3], [4]],
+        )
+        self.assertEqual(
+            [
+                (
+                    call.kwargs["params"]["lower_percentile_category"],
+                    call.kwargs["params"]["upper_percentile_category"],
+                )
+                for call in mock_post.call_args_list
+            ],
+            [("0", "9"), ("10", "19"), ("20", "20")],
+        )
+        self.assertTrue(results[0][1].startswith("batch_101_10101_pmt_0_9_"))
+        self.assertTrue(results[1][1].startswith("batch_101_10101_pmt_10_19_"))
+        self.assertTrue(results[2][1].startswith("batch_101_10101_pmt_20_20_"))
+        mock_sleep.assert_called_once_with(5)
+
+    @patch.object(MsrEtlConfig, "source_percentile_chunk_delay_seconds", 0)
+    @patch.object(MsrEtlConfig, "source_percentile_chunk_size", 10)
+    @patch("requests.Session.post")
+    @patch("location.models.Location.objects.filter")
+    def test_pull_error_identifies_failed_percentile_chunk(
+        self,
+        mock_location_filter,
+        mock_post,
+    ):
+        location_qs = MagicMock()
+        location_qs.exists.return_value = True
+        mock_location_filter.return_value = location_qs
+        mock_post.side_effect = [
+            MagicMock(ok=True, json=MagicMock(return_value={
+                "error_occurred": False,
+                "targeting_data": [{"id": 1}],
+            })),
+            requests.exceptions.ReadTimeout("UBR read timed out"),
+        ]
+        source = UBRIndividualSource(
+            get_auth_provider('noauth'),
+            pmt_percentile_range=range(0, 21),
+            district="101",
+            ta="10101",
+        )
+
+        with self.assertRaisesRegex(
+            source.Error,
+            "percentile chunk 10-19 failed",
+        ):
+            list(source.pull())
 
 
 class UBRLocationSourceTestCase(TestCase):
@@ -322,8 +458,9 @@ class UBRLocationSourceTestCase(TestCase):
         self.assertEqual(villages[0]["geo_location_code"], "101010101")
         self.assertEqual(villages[1]["geo_location_code"], "101010102")
 
+    @patch("msr_etl.sources.ubr_source.time.sleep")
     @patch("requests.Session.post")
-    def test_pull(self, mock_post):
+    def test_pull(self, mock_post, mock_sleep):
         # Mock the API responses for districts, TAs, and villages
         mock_post.side_effect = [
             MagicMock(ok=True, json=MagicMock(return_value=self.mocked_districts_response)),  # Districts
@@ -340,20 +477,75 @@ class UBRLocationSourceTestCase(TestCase):
         results = list(source.pull())
 
         # Assertions
-        self.assertEqual(len(results), 7)  # 1 for districts, 2 for TAs, 2 for GVHs, 2 for villages
+        self.assertEqual(len(results), 8)  # 2 districts, 2 TAs, 2 GVHs, 2 villages
         self.assertEqual(results[0][0]["data_type"], "D")
         self.assertEqual(results[1][0]["data_type"], "T")
         self.assertEqual(results[2][0]["data_type"], "G")
         self.assertEqual(results[3][0]["data_type"], "V")
-        self.assertEqual(results[4][0]["data_type"], "T")
-        self.assertEqual(results[5][0]["data_type"], "G")
-        self.assertEqual(results[6][0]["data_type"], "V")
+        self.assertEqual(results[4][0]["data_type"], "D")
+        self.assertEqual(results[5][0]["data_type"], "T")
+        self.assertEqual(results[6][0]["data_type"], "G")
+        self.assertEqual(results[7][0]["data_type"], "V")
 
         # Check the number of records in each result
-        self.assertEqual(len(results[0][0]["data"]), 2)  # Districts
+        self.assertEqual(len(results[0][0]["data"]), 1)  # District 101
         self.assertEqual(len(results[1][0]["data"]), 2)  # TAs for District 101
         self.assertEqual(len(results[2][0]["data"]), 2)  # GVHs for District 101
         self.assertEqual(len(results[3][0]["data"]), 2)  # Villages for District 101
-        self.assertEqual(len(results[4][0]["data"]), 2)  # TAs for District 102
-        self.assertEqual(len(results[5][0]["data"]), 2)  # GVHs for District 102
-        self.assertEqual(len(results[6][0]["data"]), 2)  # Villages for District 102
+        self.assertEqual(len(results[4][0]["data"]), 1)  # District 102
+        self.assertEqual(len(results[5][0]["data"]), 2)  # TAs for District 102
+        self.assertEqual(len(results[6][0]["data"]), 2)  # GVHs for District 102
+        self.assertEqual(len(results[7][0]["data"]), 2)  # Villages for District 102
+        self.assertEqual(mock_sleep.call_count, 2)
+
+    @patch("msr_etl.sources.ubr_source.time.sleep")
+    @patch("requests.Session.post")
+    def test_pull_skips_district_and_children_when_no_tas(
+        self,
+        mock_post,
+        mock_sleep,
+    ):
+        empty_tas_response = {
+            "error_occurred": False,
+            "total_records": 0,
+            "geo_locations": [],
+        }
+        mock_post.side_effect = [
+            MagicMock(
+                ok=True,
+                json=MagicMock(return_value=self.mocked_districts_response),
+            ),
+            MagicMock(ok=True, json=MagicMock(return_value=empty_tas_response)),
+            MagicMock(
+                ok=True,
+                json=MagicMock(return_value=self.mocked_tas_response[1]),
+            ),
+            MagicMock(
+                ok=True,
+                json=MagicMock(return_value=self.mocked_gvhs_response[1]),
+            ),
+            MagicMock(
+                ok=True,
+                json=MagicMock(return_value=self.mocked_villages_response[1]),
+            ),
+        ]
+
+        results = list(UBRLocationSource(get_auth_provider("noauth")).pull())
+
+        self.assertEqual(
+            [batch["data_type"] for batch, _identifier in results],
+            ["D", "T", "G", "V"],
+        )
+        self.assertEqual(results[0][0]["data"][0]["geo_location_code"], "102")
+        requested_params = [
+            call.kwargs["json"] for call in mock_post.call_args_list
+        ]
+        self.assertNotIn(
+            {"geo_location_type_id": 4, "district_code": "101"},
+            requested_params,
+        )
+        self.assertNotIn(
+            {"geo_location_type_id": 11, "district_code": "101"},
+            requested_params,
+        )
+        mock_sleep.assert_called_once_with(30)
