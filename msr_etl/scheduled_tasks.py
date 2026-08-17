@@ -12,6 +12,9 @@ from msr_etl.staging import job_has_failed_units, sync_staged_units
 
 logger = logging.getLogger(__name__)
 
+# PARTIAL is deliberately not here: SUCCESS/FAILED/CANCELLED are final - never re-swept, regardless
+_NEVER_RESWEEP_STATUSES = (AsyncJob.Status.SUCCESS, AsyncJob.Status.FAILED, AsyncJob.Status.CANCELLED)
+
 
 def schedule_tasks(scheduler):
     sweep_minutes = max(int(MsrEtlConfig.sync_sweep_interval_minutes), 1)
@@ -49,7 +52,13 @@ def _stale_job_uuids():
     """A live run's own reporter keeps updated_at fresh on every unit, so
     only jobs idle past sync_orphan_grace_minutes are genuinely orphaned -
     without this, sweeping a still-running job spins up a second
-    ProgressReporter and the two writers race on processed/metrics."""
+    ProgressReporter and the two writers race on processed/metrics.
+
+    CANCELLED/SUCCESS/FAILED jobs are excluded regardless of idle time: a
+    cancelled job's remaining pending units must stay untouched, not get
+    synced anyway once the grace period passes. Only PARTIAL is left
+    eligible, since its failed units are the ones sweeping is meant to
+    retry - see _close_completed_jobs for the matching re-close half."""
     grace_minutes = int(MsrEtlConfig.sync_orphan_grace_minutes)
     stale_cutoff = timezone.now() - timedelta(minutes=grace_minutes)
     candidate_job_uuids = list(
@@ -65,6 +74,7 @@ def _stale_job_uuids():
         return set()
     return set(
         AsyncJob.objects.filter(id__in=candidate_job_uuids, updated_at__lt=stale_cutoff)
+        .exclude(status__in=_NEVER_RESWEEP_STATUSES)
         .values_list("id", flat=True)
     )
 
@@ -94,10 +104,15 @@ def _sync_orphaned_units(stale_job_uuids):
 
 def _close_completed_jobs():
     """A targeted status update() only - never touches processed/metrics.
-    processed >= total, not ==, since a retried unit advances twice."""
+    processed >= total, not ==, since a retried unit advances twice.
+
+    PARTIAL is reconsidered here (unlike the other terminal statuses) so a
+    job whose sweeper-retried units all end up succeeding is promoted to
+    SUCCESS instead of being stuck at PARTIAL forever - the counterpart to
+    _stale_job_uuids leaving PARTIAL jobs eligible for the sweep."""
     open_jobs = AsyncJob.objects.filter(
         module="msr_etl",
-    ).exclude(status__in=AsyncJob.TERMINAL_STATUSES).exclude(total__isnull=True)
+    ).exclude(status__in=_NEVER_RESWEEP_STATUSES).exclude(total__isnull=True)
 
     for job in open_jobs:
         if job.processed < job.total:
@@ -108,7 +123,7 @@ def _close_completed_jobs():
             fields["error"] = "Some units failed; see msrEtlSyncUnits for details"
         else:
             fields["status"] = AsyncJob.Status.SUCCESS
-        AsyncJob.objects.filter(id=job.id).exclude(status__in=AsyncJob.TERMINAL_STATUSES).update(**fields)
+        AsyncJob.objects.filter(id=job.id).exclude(status__in=_NEVER_RESWEEP_STATUSES).update(**fields)
 
 
 def _fail_stale_jobs():
