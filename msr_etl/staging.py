@@ -246,3 +246,14 @@ def has_retryable_failed_units(job_uuid):
         sync_status=MsrEtlSyncUnit.Status.FAILED,
         attempts__lt=max_attempts,
     ).exists()
+
+
+def requeue_retryable_failed_units(job_uuid):
+    # Shared by jobs.py's inline retry loop and the sweeper's crash recovery.
+    max_attempts = int(MsrEtlConfig.sync_unit_max_attempts)
+    MsrEtlSyncUnit.objects.filter(
+        job_uuid=job_uuid,
+        stage_status=MsrEtlSyncUnit.Status.STAGED,
+        sync_status=MsrEtlSyncUnit.Status.FAILED,
+        attempts__lt=max_attempts,
+    ).update(sync_status=MsrEtlSyncUnit.Status.PENDING, updated_at=timezone.now())
