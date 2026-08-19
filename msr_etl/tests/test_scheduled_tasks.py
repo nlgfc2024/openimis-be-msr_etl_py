@@ -150,6 +150,20 @@ class SweepSyncUnitsTestCase(TestCase):
         self.assertTrue(job.error)
 
     @patch("msr_etl.scheduled_tasks.sync_staged_units")
+    def test_leaves_job_running_when_it_still_has_retryable_failed_units(self, mock_sync):
+        job = self._create_job(status=AsyncJob.Status.RUNNING, total=2, processed=2)
+        MsrEtlSyncUnit.objects.create(
+            job_uuid=job.id, unit_type=MsrEtlSyncUnit.UnitType.PERCENTILE_CHUNK, unit_code="101:10101:0-9",
+            stage_status=MsrEtlSyncUnit.Status.STAGED, sync_status=MsrEtlSyncUnit.Status.FAILED, attempts=1,
+        )
+
+        sweep_sync_units()
+
+        job.refresh_from_db()
+        self.assertEqual(job.status, AsyncJob.Status.RUNNING)
+        self.assertIsNone(job.finished_at)
+
+    @patch("msr_etl.scheduled_tasks.sync_staged_units")
     def test_leaves_job_open_when_processed_below_total(self, mock_sync):
         job = self._create_job(status=AsyncJob.Status.RUNNING, total=4, processed=2)
 
@@ -227,8 +241,8 @@ class SweepSyncUnitsTestCase(TestCase):
         self.assertEqual(failed_unit.sync_status, MsrEtlSyncUnit.Status.FAILED)
 
     @patch("msr_etl.scheduled_tasks.sync_staged_units")
-    def test_partial_job_failed_units_are_retried(self, mock_sync):
-        job = self._create_job(idle_minutes_ago=STALE_MINUTES_AGO, status=AsyncJob.Status.PARTIAL, total=2, processed=2)
+    def test_running_job_with_retryable_failed_units_is_retried_not_closed(self, mock_sync):
+        job = self._create_job(idle_minutes_ago=STALE_MINUTES_AGO, status=AsyncJob.Status.RUNNING, total=2, processed=2)
         failed_unit = MsrEtlSyncUnit.objects.create(
             job_uuid=job.id, unit_type=MsrEtlSyncUnit.UnitType.PERCENTILE_CHUNK, unit_code="101:10101:0-9",
             stage_status=MsrEtlSyncUnit.Status.STAGED, sync_status=MsrEtlSyncUnit.Status.FAILED, attempts=1,
@@ -240,8 +254,8 @@ class SweepSyncUnitsTestCase(TestCase):
         self.assertEqual(failed_unit.sync_status, MsrEtlSyncUnit.Status.PENDING)
         mock_sync.assert_called_once()
 
-    def test_partial_job_promoted_to_success_once_retry_clears_failures(self):
-        job = self._create_job(idle_minutes_ago=STALE_MINUTES_AGO, status=AsyncJob.Status.PARTIAL, total=1, processed=1)
+    def test_running_job_closed_to_success_once_retry_clears_failures(self):
+        job = self._create_job(idle_minutes_ago=STALE_MINUTES_AGO, status=AsyncJob.Status.RUNNING, total=1, processed=1)
         unit = MsrEtlSyncUnit.objects.create(
             job_uuid=job.id, unit_type=MsrEtlSyncUnit.UnitType.PERCENTILE_CHUNK, unit_code="101:10101:0-9",
             stage_status=MsrEtlSyncUnit.Status.STAGED, sync_status=MsrEtlSyncUnit.Status.SYNCED,
