@@ -51,17 +51,19 @@ class RunUbrIndividualsImportTestCase(SimpleTestCase):
     @patch("msr_etl.jobs.sync_staged_units")
     @patch("msr_etl.jobs.stage_individual_unit", return_value=False)
     @patch("msr_etl.jobs.enumerate_individual_units")
-    @patch("msr_etl.jobs.has_retryable_failed_units", return_value=True)
-    @patch("msr_etl.jobs.job_has_failed_units", return_value=True)
-    def test_stays_open_when_failed_units_are_still_retryable(
-        self, mock_has_failed, mock_retryable, mock_enumerate, mock_stage, mock_sync,
+    @patch("msr_etl.jobs.requeue_retryable_failed_units")
+    @patch("msr_etl.jobs.has_retryable_failed_units", side_effect=[True, False])
+    @patch("msr_etl.jobs.job_has_failed_units", return_value=False)
+    def test_retries_inline_before_closing(
+        self, mock_has_failed, mock_retryable, mock_requeue, mock_enumerate, mock_stage, mock_sync,
     ):
         mock_enumerate.return_value = ("source", [{"unit_code": "101:10101:0-9"}])
 
         run_ubr_individuals_import(self.reporter, district="101", ta="10101")
 
-        self.reporter.partial.assert_not_called()
-        self.reporter.succeed.assert_not_called()
+        mock_requeue.assert_called_once_with("job-uuid")
+        self.assertEqual(mock_sync.call_count, 2)
+        self.reporter.succeed.assert_called_once()
 
 
 class RunUbrLocationsImportTestCase(SimpleTestCase):
