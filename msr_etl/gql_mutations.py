@@ -17,9 +17,9 @@ from msr_etl.apps import MsrEtlConfig
 from core.gql.gql_mutations.base_mutation import BaseMutation
 from core.schema import OpenIMISMutation
 from msr_etl.sinks import IndividualImportSink, LocationImportSink
-from msr_etl.tasks.sync_job import register_ubr_location_initial_pull_job
-from msr_etl.services import UBRIndividualService
+from msr_etl.services import UBRIndividualService, UBRLocationService
 from msr_etl.sources import UBRLocationSource
+from core.services import run_as_scheduled_job
 
 
 class MsrEtlServiceMutation(BaseMutation):
@@ -96,12 +96,13 @@ class MsrEtlServiceMutation(BaseMutation):
         }
 
 
-class ExecuteMsrUbrIndividualsImportMutation(BaseMutation):
+class ScheduleMsrUbrIndividualsImportMutation(BaseMutation):
     """
-    Mutation to fetch filtered UBR household records and submit them directly
-    into the openIMIS Individual import workflow.
+    Mutation to schedule a background job that fetches filtered UBR household
+    records and submits them into the openIMIS Individual import workflow.
+    Validates inputs and returns immediately; the UBR fetch happens in the job.
     """
-    _mutation_class = "ExecuteMsrUbrIndividualsImportMutation"
+    _mutation_class = "ScheduleMsrUbrIndividualsImportMutation"
     _mutation_module = "msr_etl"
 
     class Input(OpenIMISMutation.Input):
@@ -130,27 +131,27 @@ class ExecuteMsrUbrIndividualsImportMutation(BaseMutation):
     @classmethod
     def _mutate(cls, user, **data):
         try:
-            data.pop('client_mutation_id', None)
+            client_mutation_id = data.pop('client_mutation_id', None)
             data.pop('client_mutation_label', None)
             service_kwargs = MsrEtlServiceMutation._get_supported_service_kwargs(
                 UBRIndividualService,
                 data,
             )
-            result = UBRIndividualService(user, **service_kwargs).execute()
+            # constructed only to validate inputs (district/ta/gvh) - no UBR call yet
+            UBRIndividualService(user, **service_kwargs)
 
-            if result['success']:
-                return None
-
-            return [{
-                'message': result.get(
-                    'message',
-                    "msr_etl.mutation.failed_to_execute_ubr_individuals_import",
-                ),
-                'detail': result.get('detail'),
-            }]
+            run_as_scheduled_job(
+                "msr_etl.jobs.run_ubr_individuals_import",
+                module="msr_etl",
+                job_type="ubr_individuals_import",
+                user=user,
+                params=service_kwargs,
+                client_mutation_id=client_mutation_id,
+            )
+            return None
         except Exception as exc:
             return [{
-                'message': "msr_etl.mutation.failed_to_execute_ubr_individuals_import",
+                'message': "msr_etl.mutation.failed_to_schedule_ubr_individuals_import",
                 'detail': str(exc),
             }]
 
@@ -243,14 +244,18 @@ class SaveMsrUbrLocationsMutation(BaseMutation):
             raise ValidationError("mutation.authentication_required")
 
 
-class ScheduleMsrUbrLocationInitialPullMutation(BaseMutation):
-    """Registers a one-off background job that performs a full UBR location pull."""
+class ScheduleMsrUbrLocationsImportMutation(BaseMutation):
+    """Schedules a background job that imports UBR locations, optionally
+    scoped to a district/ta/gvh/village; unscoped runs the full country."""
 
-    _mutation_class = "ScheduleMsrUbrLocationInitialPullMutation"
+    _mutation_class = "ScheduleMsrUbrLocationsImportMutation"
     _mutation_module = "msr_etl"
 
     class Input(OpenIMISMutation.Input):
-        request_id = graphene.String(required=True)
+        district = graphene.String(required=False)
+        ta = graphene.String(required=False)
+        gvh = graphene.String(required=False)
+        village = graphene.String(required=False)
 
     @classmethod
     def _validate_mutation(cls, user, **data):
@@ -261,11 +266,26 @@ class ScheduleMsrUbrLocationInitialPullMutation(BaseMutation):
     @classmethod
     def _mutate(cls, user, **data):
         try:
-            request_id = data.get("request_id")
-            register_ubr_location_initial_pull_job(user.id, request_id=request_id)
+            client_mutation_id = data.pop('client_mutation_id', None)
+            data.pop('client_mutation_label', None)
+            service_kwargs = MsrEtlServiceMutation._get_supported_service_kwargs(
+                UBRLocationService,
+                data,
+            )
+            # constructed only to validate inputs (e.g. gvh without ta) - no UBR call yet
+            UBRLocationService(user, **service_kwargs)
+
+            run_as_scheduled_job(
+                "msr_etl.jobs.run_ubr_locations_import",
+                module="msr_etl",
+                job_type="ubr_locations_import",
+                user=user,
+                params=service_kwargs,
+                client_mutation_id=client_mutation_id,
+            )
             return None
         except Exception as exc:
             return [{
-                'message': "msr_etl.mutation.failed_to_schedule_location_initial_pull",
+                'message': "msr_etl.mutation.failed_to_schedule_ubr_locations_import",
                 'detail': str(exc),
             }]

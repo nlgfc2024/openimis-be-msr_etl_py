@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import requests
@@ -15,8 +16,13 @@ from msr_etl.models import UBRWealthQuintiles
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_HOUSEHOLDS_URL = "https://malawiubr.org/api/v2/get_households_data"
-_DEFAULT_GEO_LOCATIONS_URL = "https://malawiubr.org/api/v2/get_geo_locations"
+_HOUSEHOLDS_ENDPOINT_PATH = "/get_households_data"
+_DEFAULT_HOUSEHOLDS_URL = f"https://malawiubr.org/api/v2{_HOUSEHOLDS_ENDPOINT_PATH}"
+_GEO_LOCATIONS_ENDPOINT_PATH = "/get_geo_locations"
+_DEFAULT_GEO_LOCATIONS_URL = f"https://malawiubr.org/api/v2{_GEO_LOCATIONS_ENDPOINT_PATH}"
+
+_LOCATION_UNIT_GEO_TYPE_ID = {"TA": 2, "GVH": 4, "VILLAGE": 11}
+_LOCATION_UNIT_DATA_TYPE = {"DISTRICT": "D", "TA": "T", "GVH": "G", "VILLAGE": "V"}
 
 
 def _get_int_config(value, default):
@@ -202,7 +208,7 @@ class UBRIndividualSource(DataSource):
             **self.auth_provider.get_auth_header(),
         }
 
-        url = _resolve_source_url(_DEFAULT_HOUSEHOLDS_URL, "/get_households_data")
+        url = _resolve_source_url(_DEFAULT_HOUSEHOLDS_URL, _HOUSEHOLDS_ENDPOINT_PATH)
         logger.info(f"Pulling households from {url}")
 
         session = _create_retry_session()
@@ -236,7 +242,7 @@ class UBRIndividualSource(DataSource):
             **MsrEtlConfig.source_headers,
             **self.auth_provider.get_auth_header(),
         }
-        url = _resolve_source_url(_DEFAULT_HOUSEHOLDS_URL, "/get_households_data")
+        url = _resolve_source_url(_DEFAULT_HOUSEHOLDS_URL, _HOUSEHOLDS_ENDPOINT_PATH)
         session = _create_retry_session()
 
         rows = []
@@ -247,6 +253,30 @@ class UBRIndividualSource(DataSource):
         ):
             rows.extend(chunk_rows)
         return rows
+
+    def get_district_codes(self):
+        """Enumeration for staging: local Location table only, no UBR call."""
+        return list(self._get_district_codes())
+
+    def get_ta_codes(self, district_code):
+        """Enumeration for staging: local Location table only, no UBR call."""
+        return list(self._get_ta_codes(district_code))
+
+    def get_percentile_chunks(self):
+        return list(self._iter_percentile_chunks())
+
+    def fetch_unit(self, district_code, ta_code, pmt_percentile_range):
+        """Fetch one district+TA+percentile-chunk unit for staging."""
+        headers = {
+            **MsrEtlConfig.source_headers,
+            **self.auth_provider.get_auth_header(),
+        }
+        url = _resolve_source_url(_DEFAULT_HOUSEHOLDS_URL, _HOUSEHOLDS_ENDPOINT_PATH)
+        session = _create_retry_session()
+        return self.fetch_households(
+            session, url, headers, district_code, ta_code,
+            pmt_percentile_range=pmt_percentile_range,
+        )
 
     def _iter_fetched_percentile_chunks(
         self,
@@ -348,13 +378,20 @@ class UBRIndividualSource(DataSource):
             url,
             headers,
             params=params,
+            stream=True,
         )
 
-        if not res.ok:
-            logger.error("HTTP Request failed: %s %s", res.status_code, res.reason)
-            raise self.Error(f"HTTP request failed: {res.status_code}: {res.reason}")
+        try:
+            if not res.ok:
+                logger.error("HTTP Request failed: %s %s", res.status_code, res.reason)
+                raise self.Error(f"HTTP request failed: {res.status_code}: {res.reason}")
 
-        body = res.json()
+            # stream=True + json.load(res.raw) parses straight off the socket,
+            # skipping the extra full-body .content/.text copies res.json() makes
+            res.raw.decode_content = True
+            body = json.load(res.raw)
+        finally:
+            res.close()
 
         if body.get("error_occurred", False):
             logger.error(f"Error in response: {body.get('error_message')}")
@@ -377,7 +414,7 @@ class UBRIndividualSource(DataSource):
     def _deduplicate_households(rows, seen_households):
         unique_rows = []
         for row in rows:
-            identity = UBRIndividualSource._get_household_identity(row)
+            identity = UBRIndividualSource.get_household_identity(row)
             if identity is not None:
                 if identity in seen_households:
                     logger.warning(
@@ -390,7 +427,7 @@ class UBRIndividualSource(DataSource):
         return unique_rows
 
     @staticmethod
-    def _get_household_identity(row):
+    def get_household_identity(row):
         for field in ("id", "form_number", "household_code"):
             value = row.get(field)
             if value not in (None, ""):
@@ -609,10 +646,18 @@ class UBRLocationSource(DataSource):
     def __init__(
         self,
         auth_provider: AuthProvider = None,
+        district: str = None,
+        ta: str = None,
+        gvh: str = None,
+        village: str = None,
     ):
         super().__init__()
 
         self.auth_provider = auth_provider or get_auth_provider()
+        self.district = district
+        self.ta = ta
+        self.gvh = gvh
+        self.village = village
 
     def pull(self):
         headers = {
@@ -620,7 +665,7 @@ class UBRLocationSource(DataSource):
             **self.auth_provider.get_auth_header(),
         }
 
-        url = _resolve_source_url(_DEFAULT_GEO_LOCATIONS_URL, "/get_geo_locations")
+        url = _resolve_source_url(_DEFAULT_GEO_LOCATIONS_URL, _GEO_LOCATIONS_ENDPOINT_PATH)
         logger.info(f"Pulling geo locations from {url}")
 
         session = _create_retry_session()
@@ -677,13 +722,76 @@ class UBRLocationSource(DataSource):
             logger.info(f"Sleeping for 30 seconds after processing district: {district_code}")
             time.sleep(30)
 
+    def list_districts(self):
+        """One-off global fetch for staging enumeration: the district set is
+        itself UBR data being imported, so it cannot come from local Location.
+        Scoped to self.district, this is just that one district - no UBR call."""
+        if self.district:
+            return [{"geo_location_code": self.district}]
+
+        headers = {
+            **MsrEtlConfig.source_headers,
+            **self.auth_provider.get_auth_header(),
+        }
+        url = _resolve_source_url(_DEFAULT_GEO_LOCATIONS_URL, _GEO_LOCATIONS_ENDPOINT_PATH)
+        session = _create_retry_session()
+        return self.fetch_geo_locations_from_api(
+            session, url, headers, {"geo_location_type_id": 1}, "districts"
+        )
+
+    def fetch_unit(self, district_code, unit_type):
+        """Fetch one TA/GVH/Village batch for a district, narrowed by any
+        ta/gvh/village scope set on this source, for staging."""
+        headers = {
+            **MsrEtlConfig.source_headers,
+            **self.auth_provider.get_auth_header(),
+        }
+        url = _resolve_source_url(_DEFAULT_GEO_LOCATIONS_URL, _GEO_LOCATIONS_ENDPOINT_PATH)
+        session = _create_retry_session()
+        geo_location_type_id = _LOCATION_UNIT_GEO_TYPE_ID[unit_type]
+        rows = self.fetch_geo_locations_from_api(
+            session, url, headers,
+            {"geo_location_type_id": geo_location_type_id, "district_code": district_code},
+            unit_type.lower(),
+        )
+        rows = self._narrow_unit_rows(unit_type, rows)
+        return {"data_type": _LOCATION_UNIT_DATA_TYPE[unit_type], "data": rows}
+
+    def _narrow_unit_rows(self, unit_type, rows):
+        """Apply this source's ta/gvh/village scope to a fetched batch, the
+        same parent/code filtering `fetch()` already does for its preview."""
+        if unit_type == "TA":
+            if self.ta:
+                rows = [row for row in rows if row.get("geo_location_code") == self.ta]
+            return rows
+
+        if unit_type == "GVH":
+            if self.ta:
+                rows = [row for row in rows if row.get("parent_geo_location_code") == self.ta]
+            if self.gvh:
+                rows = [row for row in rows if row.get("geo_location_code") == self.gvh]
+            return rows
+
+        if unit_type == "VILLAGE":
+            if self.gvh:
+                rows = [row for row in rows if row.get("parent_geo_location_code") == self.gvh]
+            elif self.ta:
+                # no gvh chosen yet - narrow by TA via the code prefix, same
+                # convention fetch() uses to derive ancestors from a code
+                rows = [row for row in rows if str(row.get("geo_location_code") or "")[:5] == self.ta]
+            if self.village:
+                rows = [row for row in rows if row.get("geo_location_code") == self.village]
+            return rows
+
+        return rows
+
     def fetch(self, district: str = None, ta: str = None, gvh: str = None, village: str = None):
         headers = {
             **MsrEtlConfig.source_headers,
             **self.auth_provider.get_auth_header(),
         }
 
-        url = _resolve_source_url(_DEFAULT_GEO_LOCATIONS_URL, "/get_geo_locations")
+        url = _resolve_source_url(_DEFAULT_GEO_LOCATIONS_URL, _GEO_LOCATIONS_ENDPOINT_PATH)
         logger.info(f"Pulling geo locations from {url}")
 
         session = _create_retry_session()

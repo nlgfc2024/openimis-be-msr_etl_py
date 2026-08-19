@@ -4,20 +4,20 @@ from msr_etl.apps import MsrEtlConfig
 from msr_etl.gql_queries import (
     MsrEtlServiceGQLType,
     MsrEtlServicesListGQLType,
+    MsrEtlSyncUnitsGQLType,
     MsrUbrIndividualsGQLType,
     MsrUbrLocationBatchGQLType,
     MsrUbrLocationsGQLType,
-    MsrUbrLocationInitialPullStatusGQLType,
 )
+from msr_etl.models import MsrEtlSyncUnit
 from msr_etl.gql_mutations import (
-    ExecuteMsrUbrIndividualsImportMutation,
     MsrEtlServiceMutation,
     SaveMsrUbrIndividualsMutation,
     SaveMsrUbrLocationsMutation,
-    ScheduleMsrUbrLocationInitialPullMutation,
+    ScheduleMsrUbrIndividualsImportMutation,
+    ScheduleMsrUbrLocationsImportMutation,
 )
 from msr_etl.sources import UBRIndividualSource, UBRLocationSource
-from msr_etl.tasks.sync_job import get_ubr_location_initial_pull_status
 from msr_etl.utils import (
     get_class_by_name,
     get_classes_in_module,
@@ -59,9 +59,13 @@ class Query(graphene.ObjectType):
         village=graphene.Argument(graphene.String, required=False),
     )
 
-    msr_ubr_location_initial_pull_status = graphene.Field(
-        MsrUbrLocationInitialPullStatusGQLType,
-        request_id=graphene.Argument(graphene.String, required=True),
+    msr_etl_sync_units = graphene.Field(
+        MsrEtlSyncUnitsGQLType,
+        job_uuid=graphene.Argument(graphene.String, required=True),
+        unit_type=graphene.Argument(graphene.String, required=False),
+        sync_status=graphene.Argument(graphene.String, required=False),
+        limit=graphene.Argument(graphene.Int, required=False, default_value=100),
+        offset=graphene.Argument(graphene.Int, required=False, default_value=0),
     )
 
     def _resolve_etl_services(parent, info, **kwargs):
@@ -165,30 +169,31 @@ class Query(graphene.ObjectType):
             count=sum(batch.count for batch in batches),
         )
 
-    def resolve_msr_ubr_location_initial_pull_status(parent, info, **kwargs):
+    def resolve_msr_etl_sync_units(parent, info, **kwargs):
         if not info.context.user.has_perms(MsrEtlConfig.gql_query_msr_etl_rule_perms):
             raise PermissionError("Unauthorized")
 
-        request_id = kwargs.get("request_id")
-        status_payload = get_ubr_location_initial_pull_status(request_id)
-        if not status_payload:
-            return None
+        qs = MsrEtlSyncUnit.objects.filter(job_uuid=kwargs.get("job_uuid"))
+        if kwargs.get("unit_type"):
+            qs = qs.filter(unit_type=kwargs["unit_type"])
+        if kwargs.get("sync_status"):
+            qs = qs.filter(sync_status=kwargs["sync_status"])
 
-        return MsrUbrLocationInitialPullStatusGQLType(
-            request_id=status_payload.get("request_id"),
-            status=status_payload.get("status"),
-            message=status_payload.get("message"),
-            started_at=status_payload.get("started_at"),
-            finished_at=status_payload.get("finished_at"),
-            updated_at=status_payload.get("updated_at"),
+        total_count = qs.count()
+        limit = kwargs.get("limit") or 100
+        offset = kwargs.get("offset") or 0
+        units = list(qs.order_by("unit_code", "id")[offset:offset + limit])
+
+        return MsrEtlSyncUnitsGQLType(
+            units=units,
+            count=len(units),
+            total_count=total_count,
         )
 
 
 class Mutation(graphene.ObjectType):
     execute_msr_etl_service = MsrEtlServiceMutation.Field()
-    execute_msr_ubr_individuals_import = (
-        ExecuteMsrUbrIndividualsImportMutation.Field()
-    )
+    schedule_msr_ubr_individuals_import = ScheduleMsrUbrIndividualsImportMutation.Field()
     save_msr_ubr_individuals = SaveMsrUbrIndividualsMutation.Field()
     save_msr_ubr_locations = SaveMsrUbrLocationsMutation.Field()
-    schedule_msr_ubr_location_initial_pull = ScheduleMsrUbrLocationInitialPullMutation.Field()
+    schedule_msr_ubr_locations_import = ScheduleMsrUbrLocationsImportMutation.Field()
