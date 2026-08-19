@@ -1,6 +1,7 @@
 from msr_etl.staging import (
     enumerate_individual_units,
     enumerate_location_units,
+    has_retryable_failed_units,
     job_has_failed_units,
     stage_individual_unit,
     stage_location_unit,
@@ -35,6 +36,8 @@ def run_ubr_locations_import(reporter, **params):
 
 
 def _finish(reporter):
+    if has_retryable_failed_units(reporter.job.id):
+        return
     if job_has_failed_units(reporter.job.id):
         reporter.partial(error="Some units failed; see msrEtlSyncUnits for details")
     else:
