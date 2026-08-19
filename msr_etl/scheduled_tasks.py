@@ -8,7 +8,12 @@ from core.models import AsyncJob
 from core.services import ProgressReporter
 from msr_etl.apps import MsrEtlConfig
 from msr_etl.models import MsrEtlSyncUnit
-from msr_etl.staging import has_retryable_failed_units, job_has_failed_units, sync_staged_units
+from msr_etl.staging import (
+    has_retryable_failed_units,
+    job_has_failed_units,
+    requeue_retryable_failed_units,
+    sync_staged_units,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -35,14 +40,20 @@ def schedule_tasks(scheduler):
 
 
 def sweep_sync_units():
+    # Crash recovery only - a live run now retries and closes itself
+    # (jobs.py's _finish), so this only matters if the worker died mid-run.
     stale_job_uuids = _stale_job_uuids()
-    _requeue_retryable_failed_units(stale_job_uuids)
+    for job_uuid in stale_job_uuids:
+        requeue_retryable_failed_units(job_uuid)
     _sync_orphaned_units(stale_job_uuids)
     _close_completed_jobs()
     _fail_stale_jobs()
 
 
 def _stale_job_uuids():
+    # updated_at stays fresh while a job's own reporter is writing, so only
+    # truly idle jobs are swept - otherwise two ProgressReporters could race
+    # on the same job's processed/metrics.
     grace_minutes = int(MsrEtlConfig.sync_orphan_grace_minutes)
     stale_cutoff = timezone.now() - timedelta(minutes=grace_minutes)
     candidate_job_uuids = list(
@@ -63,18 +74,6 @@ def _stale_job_uuids():
     )
 
 
-def _requeue_retryable_failed_units(stale_job_uuids):
-    if not stale_job_uuids:
-        return
-    max_attempts = int(MsrEtlConfig.sync_unit_max_attempts)
-    MsrEtlSyncUnit.objects.filter(
-        job_uuid__in=stale_job_uuids,
-        stage_status=MsrEtlSyncUnit.Status.STAGED,
-        sync_status=MsrEtlSyncUnit.Status.FAILED,
-        attempts__lt=max_attempts,
-    ).update(sync_status=MsrEtlSyncUnit.Status.PENDING, updated_at=timezone.now())
-
-
 def _sync_orphaned_units(stale_job_uuids):
     for job_uuid in stale_job_uuids:
         job = AsyncJob.objects.filter(id=job_uuid).first()
@@ -85,6 +84,8 @@ def _sync_orphaned_units(stale_job_uuids):
 
 
 def _close_completed_jobs():
+    # Backstop for a job whose worker died before self-closing; jobs that
+    # completed normally are already terminal by the time this runs.
     open_jobs = AsyncJob.objects.filter(
         module="msr_etl",
     ).exclude(status__in=AsyncJob.TERMINAL_STATUSES).exclude(total__isnull=True)
@@ -100,6 +101,7 @@ def _close_completed_jobs():
             fields["error"] = "Some units failed; see msrEtlSyncUnits for details"
         else:
             fields["status"] = AsyncJob.Status.SUCCESS
+        # Re-excluded here in case the job went terminal between the read above and this write.
         AsyncJob.objects.filter(id=job.id).exclude(status__in=AsyncJob.TERMINAL_STATUSES).update(**fields)
 
 
