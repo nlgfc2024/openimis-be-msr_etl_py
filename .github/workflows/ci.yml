@@ -55,9 +55,9 @@ jobs:
           # Clone with the determined branch
           rm -rf ./openimis
           git clone --depth=1 --branch="$TARGET_BRANCH" https://github.com/nlgfc2024/openimis-be_py.git ./openimis || {
-            echo "Failed to clone branch '$TARGET_BRANCH' - falling back to 'develop'"
-            git clone --depth=1 --branch=develop https://github.com/nlgfc2024/openimis-be_py.git ./openimis
-            echo "Cloned fallback branch: develop"
+            echo "Failed to clone branch '$TARGET_BRANCH' - falling back to 'mw/develop'"
+            git clone --depth=1 --branch=mw/develop https://github.com/nlgfc2024/openimis-be_py.git ./openimis
+            echo "Cloned fallback branch: mw/develop"
           }
 
           # Verify what we actually got
