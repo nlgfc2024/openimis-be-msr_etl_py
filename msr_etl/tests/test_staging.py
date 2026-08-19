@@ -8,6 +8,7 @@ from msr_etl.staging import (
     enumerate_location_units,
     has_retryable_failed_units,
     job_has_failed_units,
+    requeue_retryable_failed_units,
     stage_individual_unit,
     stage_location_unit,
     sync_staged_units,
@@ -344,3 +345,34 @@ class HasRetryableFailedUnitsTestCase(TestCase):
             stage_status=MsrEtlSyncUnit.Status.FAILED,
         )
         self.assertFalse(has_retryable_failed_units(job_uuid))
+
+
+class RequeueRetryableFailedUnitsTestCase(TestCase):
+
+    def test_requeues_units_below_max_attempts(self):
+        job_uuid = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+        unit = MsrEtlSyncUnit.objects.create(
+            job_uuid=job_uuid, unit_type=MsrEtlSyncUnit.UnitType.TA, unit_code="101",
+            stage_status=MsrEtlSyncUnit.Status.STAGED,
+            sync_status=MsrEtlSyncUnit.Status.FAILED,
+            attempts=1,
+        )
+
+        requeue_retryable_failed_units(job_uuid)
+
+        unit.refresh_from_db()
+        self.assertEqual(unit.sync_status, MsrEtlSyncUnit.Status.PENDING)
+
+    def test_leaves_units_at_max_attempts_failed(self):
+        job_uuid = "dddddddd-dddd-dddd-dddd-dddddddddddd"
+        unit = MsrEtlSyncUnit.objects.create(
+            job_uuid=job_uuid, unit_type=MsrEtlSyncUnit.UnitType.TA, unit_code="101",
+            stage_status=MsrEtlSyncUnit.Status.STAGED,
+            sync_status=MsrEtlSyncUnit.Status.FAILED,
+            attempts=3,
+        )
+
+        requeue_retryable_failed_units(job_uuid)
+
+        unit.refresh_from_db()
+        self.assertEqual(unit.sync_status, MsrEtlSyncUnit.Status.FAILED)
