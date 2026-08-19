@@ -3,6 +3,7 @@ from msr_etl.staging import (
     enumerate_location_units,
     has_retryable_failed_units,
     job_has_failed_units,
+    requeue_retryable_failed_units,
     stage_individual_unit,
     stage_location_unit,
     sync_staged_units,
@@ -36,8 +37,12 @@ def run_ubr_locations_import(reporter, **params):
 
 
 def _finish(reporter):
-    if has_retryable_failed_units(reporter.job.id):
-        return
+    # Retry inline so a normal run self-closes; the sweeper is then only
+    # needed to recover a job whose worker process died mid-run.
+    while has_retryable_failed_units(reporter.job.id):
+        requeue_retryable_failed_units(reporter.job.id)
+        sync_staged_units(reporter.job.id, reporter=reporter, user=reporter.job.user)
+
     if job_has_failed_units(reporter.job.id):
         reporter.partial(error="Some units failed; see msrEtlSyncUnits for details")
     else:
