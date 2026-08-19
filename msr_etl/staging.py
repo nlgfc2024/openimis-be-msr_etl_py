@@ -5,6 +5,7 @@ from django.db.models import Case, IntegerField, Q, Value, When
 from django.utils import timezone
 
 from msr_etl.adapters import UBRIndividualAdapter, UBRLocationAdapter
+from msr_etl.apps import MsrEtlConfig
 from msr_etl.models import MsrEtlSyncUnit
 from msr_etl.services import UBRIndividualService, UBRLocationService
 from msr_etl.sinks import IndividualImportSink, LocationImportSink
@@ -231,4 +232,17 @@ def sync_staged_units(job_uuid, reporter=None, user=None):
 def job_has_failed_units(job_uuid):
     return MsrEtlSyncUnit.objects.filter(job_uuid=job_uuid).filter(
         Q(stage_status=MsrEtlSyncUnit.Status.FAILED) | Q(sync_status=MsrEtlSyncUnit.Status.FAILED)
+    ).exists()
+
+
+def has_retryable_failed_units(job_uuid):
+    """True if this job has sync-failed units still under sync_unit_max_attempts
+    - i.e. worth another sweeper pass before the job is allowed to
+    close."""
+    max_attempts = int(MsrEtlConfig.sync_unit_max_attempts)
+    return MsrEtlSyncUnit.objects.filter(
+        job_uuid=job_uuid,
+        stage_status=MsrEtlSyncUnit.Status.STAGED,
+        sync_status=MsrEtlSyncUnit.Status.FAILED,
+        attempts__lt=max_attempts,
     ).exists()
