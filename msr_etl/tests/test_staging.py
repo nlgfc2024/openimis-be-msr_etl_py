@@ -6,6 +6,7 @@ from msr_etl.models import MsrEtlSyncUnit
 from msr_etl.staging import (
     enumerate_individual_units,
     enumerate_location_units,
+    has_retryable_failed_units,
     job_has_failed_units,
     stage_individual_unit,
     stage_location_unit,
@@ -308,3 +309,38 @@ class JobHasFailedUnitsTestCase(TestCase):
             sync_status=MsrEtlSyncUnit.Status.SYNCED,
         )
         self.assertFalse(job_has_failed_units(job_uuid))
+
+
+class HasRetryableFailedUnitsTestCase(TestCase):
+
+    def test_false_when_no_units(self):
+        self.assertFalse(has_retryable_failed_units("88888888-8888-8888-8888-888888888888"))
+
+    def test_true_when_sync_failure_below_max_attempts(self):
+        job_uuid = "99999999-9999-9999-9999-999999999999"
+        MsrEtlSyncUnit.objects.create(
+            job_uuid=job_uuid, unit_type=MsrEtlSyncUnit.UnitType.TA, unit_code="101",
+            stage_status=MsrEtlSyncUnit.Status.STAGED,
+            sync_status=MsrEtlSyncUnit.Status.FAILED,
+            attempts=1,
+        )
+        self.assertTrue(has_retryable_failed_units(job_uuid))
+
+    def test_false_once_max_attempts_reached(self):
+        job_uuid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+        MsrEtlSyncUnit.objects.create(
+            job_uuid=job_uuid, unit_type=MsrEtlSyncUnit.UnitType.TA, unit_code="101",
+            stage_status=MsrEtlSyncUnit.Status.STAGED,
+            sync_status=MsrEtlSyncUnit.Status.FAILED,
+            attempts=3,
+        )
+        self.assertFalse(has_retryable_failed_units(job_uuid))
+
+    def test_false_on_stage_level_failure(self):
+        # stage failures have no requeue path (no staged payload to retry from)
+        job_uuid = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+        MsrEtlSyncUnit.objects.create(
+            job_uuid=job_uuid, unit_type=MsrEtlSyncUnit.UnitType.TA, unit_code="101",
+            stage_status=MsrEtlSyncUnit.Status.FAILED,
+        )
+        self.assertFalse(has_retryable_failed_units(job_uuid))
