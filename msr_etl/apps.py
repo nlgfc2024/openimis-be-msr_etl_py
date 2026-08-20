@@ -21,6 +21,7 @@ DEFAULT_CONFIG = {
     "source_ca_bundle_path": "",
 
     "ubr_programme_parameter_id": 2,
+    "ubr_disability_parameter_id": 6,
 
     "adapter_first_name_field": "firstName",
     "adapter_last_name_field": "lastName",
@@ -65,6 +66,7 @@ class MsrEtlConfig(AppConfig):
     source_ca_bundle_path = None
 
     ubr_programme_parameter_id = None
+    ubr_disability_parameter_id = None
 
     adapter_first_name_field = None
     adapter_last_name_field = None
