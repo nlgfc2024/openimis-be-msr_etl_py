@@ -2,6 +2,7 @@ import logging
 from typing import Any, Iterable
 
 from msr_etl.adapters.base import DataAdapter
+from msr_etl.apps import MsrEtlConfig
 from location.models import Location
 
 logger = logging.getLogger(__name__)
@@ -84,6 +85,8 @@ class UBRIndividualAdapter(DataAdapter):
                     "national_id": member.get("national_id"),
                     "fit_for_work": member.get("fit_for_work"),
                     "gender": self.parse_gender(member),
+                    "marital_status": self.parse_marital_status(member),
+                    "disability": self.parse_disability(member),
                     "household_mobile_number": mobile_number,
                     "household_pmt_score": pmt_score,
                     "household_wealth_quintile": wealth_quintile,
@@ -99,6 +102,28 @@ class UBRIndividualAdapter(DataAdapter):
     @staticmethod
     def parse_gender(member_dict):
         return member_dict.get("gender", {}).get("parameter_name")
+
+    @staticmethod
+    def parse_marital_status(member_dict):
+        return member_dict.get("marital_status", {}).get("parameter_name")
+
+    @staticmethod
+    def parse_disability(member_dict):
+        """Disability status for a member.
+
+        UBR doesn't expose disability as its own field. It's one entry among several generic
+        ``household_member_combined_responses``, each carrying a ``general_parameter`` whose ``parameter_id`` 
+        identifies which question it answers. The disability question's ``parameter_id`` is configurable via 
+        ``MsrEtlConfig.ubr_disability_parameter_id`` (default ``6``).
+        """
+        disability_parameter_id = str(
+            getattr(MsrEtlConfig, "ubr_disability_parameter_id", 6)
+        )
+        for response in member_dict.get("household_member_combined_responses") or []:
+            general_parameter = response.get("general_parameter") or {}
+            if str(general_parameter.get("parameter_id")) == disability_parameter_id:
+                return general_parameter.get("parameter_name")
+        return None
 
     @staticmethod
     def parse_individual_role(member_dict):
