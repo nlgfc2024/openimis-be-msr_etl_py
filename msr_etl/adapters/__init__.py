@@ -1,8 +1,10 @@
 from msr_etl.adapters.base import DataAdapter
+from msr_etl.adapters.configurable_adapter import ConfigurableAdapter
 from msr_etl.adapters.ubr_adapter import UBRIndividualAdapter, UBRLocationAdapter
 
 __all__ = [
     "DataAdapter",
+    "ConfigurableAdapter",
     "UBRIndividualAdapter",
     "UBRLocationAdapter",
 ]
