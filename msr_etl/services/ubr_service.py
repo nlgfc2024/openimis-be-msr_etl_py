@@ -1,7 +1,8 @@
-from msr_etl.adapters import DataAdapter, UBRIndividualAdapter, UBRLocationAdapter
+from msr_etl.adapters import DataAdapter
 from msr_etl.services.base import MsrETLService
 from msr_etl.sinks import DataSink, IndividualImportSink, LocationImportSink
-from msr_etl.sources import DataSource, UBRIndividualSource, UBRLocationSource
+from msr_etl.source_registry import resolve_individual_source, resolve_location_source
+from msr_etl.sources import DataSource
 from core.models import User
 
 
@@ -9,6 +10,7 @@ class UBRIndividualService(MsrETLService):
 
     def __init__(self,
                  user: User,
+                 source_type: str = None,
                  district: str = None,
                  ta: str = None,
                  gvh: str = None,
@@ -39,8 +41,10 @@ class UBRIndividualService(MsrETLService):
         else:
             pmt_percentile_range = range(0, 11)
 
+        source_cls, adapter_cls = resolve_individual_source(source_type)
+
         super().__init__(
-            source=source or UBRIndividualSource(
+            source=source or source_cls(
                 district=district,
                 ta=ta,
                 gvh=gvh,
@@ -56,7 +60,7 @@ class UBRIndividualService(MsrETLService):
                 excluded_programme_codes=excluded_programme_codes,
                 household_head_gender=household_head_gender,
             ),
-            adapter=adapter or UBRIndividualAdapter(),
+            adapter=adapter or adapter_cls(),
             sink=sink or IndividualImportSink(user)
         )
 
@@ -65,6 +69,7 @@ class UBRLocationService(MsrETLService):
 
     def __init__(self,
                  user: User,
+                 source_type: str = None,
                  district: str = None,
                  ta: str = None,
                  gvh: str = None,
@@ -79,13 +84,15 @@ class UBRLocationService(MsrETLService):
         if ta and not district:
             raise ValueError("district is required when ta is provided")
 
+        source_cls, adapter_cls = resolve_location_source(source_type)
+
         super().__init__(
-            source=source or UBRLocationSource(
+            source=source or source_cls(
                 district=district,
                 ta=ta,
                 gvh=gvh,
                 village=village,
             ),
-            adapter=adapter or UBRLocationAdapter(),
+            adapter=adapter or adapter_cls(),
             sink=sink or LocationImportSink(user)
         )
