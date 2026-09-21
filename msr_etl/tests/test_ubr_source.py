@@ -8,6 +8,12 @@ from django.test import SimpleTestCase, TestCase
 from msr_etl.apps import MsrEtlConfig
 from msr_etl.auth_provider import get_auth_provider
 from msr_etl.sources import UBRIndividualSource, UBRLocationSource
+from msr_etl.sources.ubr_source import (
+    _DEFAULT_GEO_LOCATIONS_URL,
+    _DEFAULT_HOUSEHOLDS_URL,
+    _resolve_geo_locations_url,
+    _resolve_households_url,
+)
 import requests
 
 
@@ -268,7 +274,7 @@ class UBRIndividualSourceTestCase(SimpleTestCase):
 
         with self.assertRaisesRegex(
             source.Error,
-            "source_ca_bundle_path.*source_verify_ssl",
+            "ca_bundle_path.*verify_ssl",
         ):
             source.fetch_households(
                 session=session,
@@ -278,7 +284,7 @@ class UBRIndividualSourceTestCase(SimpleTestCase):
                 ta_code="10101",
             )
 
-    @patch.object(MsrEtlConfig, "source_percentile_chunk_size", 10)
+    @patch.object(MsrEtlConfig, "sources", {"ubr": {"percentile_chunk_size": 10}})
     def test_percentile_chunks_are_inclusive_and_non_overlapping(self):
         source = UBRIndividualSource(
             get_auth_provider('noauth'),
@@ -304,8 +310,7 @@ class UBRIndividualSourceTestCase(SimpleTestCase):
             (100, 100),
         ])
 
-    @patch.object(MsrEtlConfig, "source_percentile_chunk_delay_seconds", 0)
-    @patch.object(MsrEtlConfig, "source_percentile_chunk_size", 10)
+    @patch.object(MsrEtlConfig, "sources", {"ubr": {"percentile_chunk_size": 10, "percentile_chunk_delay_seconds": 0}})
     @patch("time.sleep")
     @patch("requests.Session.post")
     @patch("location.models.Location.objects.filter")
@@ -361,8 +366,7 @@ class UBRIndividualSourceTestCase(SimpleTestCase):
         self.assertTrue(results[2][1].startswith("batch_101_10101_pmt_20_20_"))
         mock_sleep.assert_called_once_with(5)
 
-    @patch.object(MsrEtlConfig, "source_percentile_chunk_delay_seconds", 0)
-    @patch.object(MsrEtlConfig, "source_percentile_chunk_size", 10)
+    @patch.object(MsrEtlConfig, "sources", {"ubr": {"percentile_chunk_size": 10, "percentile_chunk_delay_seconds": 0}})
     @patch("requests.Session.post")
     @patch("location.models.Location.objects.filter")
     def test_pull_error_identifies_failed_percentile_chunk(
@@ -474,9 +478,11 @@ class UBRLocationSourceTestCase(TestCase):
 
     @patch("requests.Session.post")
     def test_fetch_geo_locations_from_api(self, mock_post):
+        source = UBRLocationSource(get_auth_provider("noauth"))
+
         # Test districts
         mock_post.return_value = MagicMock(ok=True, json=MagicMock(return_value=self.mocked_districts_response))
-        districts = UBRLocationSource.fetch_geo_locations_from_api(
+        districts = source.fetch_geo_locations_from_api(
             self.session, self.url, self.headers, {"geo_location_type_id": 1}, "districts"
         )
         self.assertEqual(len(districts), 2)
@@ -485,7 +491,7 @@ class UBRLocationSourceTestCase(TestCase):
 
         # Test TAs
         mock_post.return_value = MagicMock(ok=True, json=MagicMock(return_value=self.mocked_tas_response[0]))
-        tas = UBRLocationSource.fetch_geo_locations_from_api(
+        tas = source.fetch_geo_locations_from_api(
             self.session, self.url, self.headers, {"geo_location_type_id": 2, "district_code": "101"}, "TAs"
         )
         self.assertEqual(len(tas), 2)
@@ -494,7 +500,7 @@ class UBRLocationSourceTestCase(TestCase):
 
         # Test Villages
         mock_post.return_value = MagicMock(ok=True, json=MagicMock(return_value=self.mocked_villages_response[0]))
-        villages = UBRLocationSource.fetch_geo_locations_from_api(
+        villages = source.fetch_geo_locations_from_api(
             self.session, self.url, self.headers, {"geo_location_type_id": 11, "district_code": "101"}, "Villages"
         )
         self.assertEqual(len(villages), 2)
@@ -670,3 +676,53 @@ class UBRLocationSourceTestCase(TestCase):
         result = source.fetch_unit("101", "VILLAGE")
 
         self.assertEqual([row["geo_location_code"] for row in result["data"]], ["101010102"])
+
+
+class ResolveSourceUrlTestCase(SimpleTestCase):
+
+    def setUp(self):
+        self._original_sources = MsrEtlConfig.sources
+
+    def tearDown(self):
+        MsrEtlConfig.sources = self._original_sources
+
+    def test_households_url_falls_back_to_ubr_default_when_unconfigured(self):
+        MsrEtlConfig.sources = {}
+        self.assertEqual(_resolve_households_url("ubr"), _DEFAULT_HOUSEHOLDS_URL)
+
+    def test_geo_locations_url_falls_back_to_ubr_default_when_unconfigured(self):
+        MsrEtlConfig.sources = {}
+        self.assertEqual(_resolve_geo_locations_url("ubr"), _DEFAULT_GEO_LOCATIONS_URL)
+
+    def test_different_source_type_can_have_its_own_endpoint_path(self):
+        # sourceB shares UBRIndividualSource/UBRLocationSource but talks to a
+        # differently-shaped API - only its base host is common with ubr.
+        MsrEtlConfig.sources = {
+            "sourceB": {
+                "base_url": "https://example.org/api",
+                "households_endpoint_path": "/fetch_targets",
+                "geo_locations_endpoint_path": "/fetch_geo",
+            },
+        }
+        self.assertEqual(_resolve_households_url("sourceB"), "https://example.org/api/fetch_targets")
+        self.assertEqual(_resolve_geo_locations_url("sourceB"), "https://example.org/api/fetch_geo")
+
+    def test_configured_base_url_already_including_path_is_left_alone(self):
+        MsrEtlConfig.sources = {
+            "sourceB": {
+                "base_url": "https://example.org/api/fetch_targets",
+                "households_endpoint_path": "/fetch_targets",
+            },
+        }
+        self.assertEqual(_resolve_households_url("sourceB"), "https://example.org/api/fetch_targets")
+
+    def test_source_types_do_not_leak_endpoint_paths_into_each_other(self):
+        MsrEtlConfig.sources = {
+            "ubr": {"base_url": "https://malawiubr.org/api/v2"},
+            "sourceB": {
+                "base_url": "https://example.org/api",
+                "households_endpoint_path": "/fetch_targets",
+            },
+        }
+        self.assertEqual(_resolve_households_url("ubr"), "https://malawiubr.org/api/v2/get_households_data")
+        self.assertEqual(_resolve_households_url("sourceB"), "https://example.org/api/fetch_targets")
