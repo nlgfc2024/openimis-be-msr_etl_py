@@ -13,8 +13,8 @@ _auth_config_mapping = {
 }
 
 
-def get_auth_provider(auth_type: Optional[Literal["noauth", "basic", "bearer"]] = None):
-    auth_type = auth_type or MsrEtlConfig.auth_type
+def get_auth_provider(auth_type: Optional[Literal["noauth", "basic", "bearer"]] = None, source_type: str = "ubr"):
+    auth_type = auth_type or MsrEtlConfig.get_source_config(source_type).get("auth_type", "noauth")
     if auth_type not in _auth_config_mapping:
-        AuthError(f"Unknown auth type: {auth_type}")
-    return _auth_config_mapping[auth_type]()
+        raise AuthError(f"Unknown auth type: {auth_type}")
+    return _auth_config_mapping[auth_type](source_type=source_type)
