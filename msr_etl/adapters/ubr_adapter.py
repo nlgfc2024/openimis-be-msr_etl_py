@@ -10,6 +10,9 @@ logger = logging.getLogger(__name__)
 
 class UBRIndividualAdapter(DataAdapter):
 
+    def __init__(self, source_type: str = "ubr"):
+        self.source_type = source_type
+
     def transform(self, data: Iterable[Any]) -> Iterable[Any]:
         result = []
 
@@ -107,18 +110,9 @@ class UBRIndividualAdapter(DataAdapter):
     def parse_marital_status(member_dict):
         return member_dict.get("marital_status", {}).get("parameter_name")
 
-    @staticmethod
-    def parse_disability(member_dict):
-        """Disability status for a member.
-
-        UBR doesn't expose disability as its own field. It's one entry among several generic
-        ``household_member_combined_responses``, each carrying a ``general_parameter`` whose ``parameter_id`` 
-        identifies which question it answers. The disability question's ``parameter_id`` is configurable via 
-        ``MsrEtlConfig.ubr_disability_parameter_id`` (default ``6``).
-        """
-        disability_parameter_id = str(
-            getattr(MsrEtlConfig, "ubr_disability_parameter_id", 6)
-        )
+    def parse_disability(self, member_dict):
+        config = MsrEtlConfig.get_source_config(self.source_type)
+        disability_parameter_id = str(config.get("disability_parameter_id") or 6)
         for response in member_dict.get("household_member_combined_responses") or []:
             general_parameter = response.get("general_parameter") or {}
             if str(general_parameter.get("parameter_id")) == disability_parameter_id:
