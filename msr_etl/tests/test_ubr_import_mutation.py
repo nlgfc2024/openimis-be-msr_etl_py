@@ -49,12 +49,17 @@ class ScheduleMsrUbrIndividualsImportMutationTestCase(SimpleTestCase):
 
         self.assertEqual(result, self.supported_filters)
 
-    def test_ubr_individual_service_requires_district_and_ta(self):
+    def test_ubr_individual_service_allows_district_only(self):
+        service = UBRIndividualService(self.user, district="101", sink=MagicMock())
+        self.assertEqual(service.source.district, "101")
+        self.assertIsNone(service.source.ta)
+
+    def test_ubr_individual_service_requires_district(self):
         with self.assertRaisesRegex(
             ValueError,
-            "district and ta are required",
+            "district is required",
         ):
-            UBRIndividualService(self.user, district="101")
+            UBRIndividualService(self.user)
 
     def test_ubr_individual_service_requires_gvh_with_village(self):
         with self.assertRaisesRegex(
