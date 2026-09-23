@@ -33,8 +33,8 @@ class UBRIndividualService(MsrETLService):
                  source: DataSource = None,
                  adapter: DataAdapter = None,
                  sink: DataSink = None):
-        if not district or not ta:
-            raise ValueError("district and ta are required for UBR household imports")
+        if not district:
+            raise ValueError("district is required for UBR household imports")
         if village and not gvh:
             raise ValueError("gvh is required when village is provided")
 
