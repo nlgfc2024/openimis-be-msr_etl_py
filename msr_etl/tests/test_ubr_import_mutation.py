@@ -86,8 +86,8 @@ class ScheduleMsrUbrIndividualsImportMutationTestCase(SimpleTestCase):
             self.user,
             client_mutation_id="mutation-id",
             client_mutation_label="MSR auto import",
-            unsupported_value="ignored",
-            **self.supported_filters,
+            source_type="ubr",
+            filters={**self.supported_filters, "unsupported_value": "ignored"},
         )
 
         self.assertIsNone(result)
@@ -108,9 +108,7 @@ class ScheduleMsrUbrIndividualsImportMutationTestCase(SimpleTestCase):
     def test_mutation_returns_error_when_validation_fails(self, mock_dispatch):
         result = ScheduleMsrUbrIndividualsImportMutation.async_mutate(
             self.user,
-            district="101",
-            ta="10101",
-            village="101010101",
+            filters={"district": "101", "ta": "10101", "village": "101010101"},
         )
 
         self.assertEqual(len(result), 1)
@@ -123,8 +121,7 @@ class ScheduleMsrUbrIndividualsImportMutationTestCase(SimpleTestCase):
 
         result = ScheduleMsrUbrIndividualsImportMutation.async_mutate(
             self.user,
-            district="101",
-            ta="10101",
+            filters={"district": "101", "ta": "10101"},
         )
 
         self.assertEqual(len(result), 1)
@@ -168,9 +165,7 @@ class ScheduleMsrUbrLocationsImportMutationTestCase(SimpleTestCase):
         result = ScheduleMsrUbrLocationsImportMutation.async_mutate(
             self.user,
             client_mutation_id="mutation-id",
-            district="101",
-            ta="10101",
-            gvh="1010101",
+            filters={"district": "101", "ta": "10101", "gvh": "1010101"},
         )
 
         self.assertIsNone(result)
@@ -187,7 +182,7 @@ class ScheduleMsrUbrLocationsImportMutationTestCase(SimpleTestCase):
     def test_mutation_returns_error_when_validation_fails(self, mock_dispatch):
         result = ScheduleMsrUbrLocationsImportMutation.async_mutate(
             self.user,
-            ta="10101",
+            filters={"ta": "10101"},
         )
 
         self.assertEqual(len(result), 1)
