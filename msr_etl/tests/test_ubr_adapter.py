@@ -170,7 +170,7 @@ class UBRIndividualAdapterTestCase(TestCase):
                 {"general_parameter": {"parameter_id": 99, "parameter_name": "Physically disabled"}},
             ],
         }
-        with patch.object(MsrEtlConfig, "ubr_disability_parameter_id", 99):
+        with patch.object(MsrEtlConfig, "sources", {"ubr": {"disability_parameter_id": 99}}):
             self.assertEqual(self.adapter.parse_disability(member), "Physically disabled")
 
     def test_parse_individual_role_valid_cases(self):
