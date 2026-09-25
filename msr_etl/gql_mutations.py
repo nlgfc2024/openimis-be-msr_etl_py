@@ -108,21 +108,7 @@ class ScheduleMsrUbrIndividualsImportMutation(BaseMutation):
 
     class Input(OpenIMISMutation.Input):
         source_type = graphene.String(required=False)
-        district = graphene.String(required=True)
-        ta = graphene.String(required=False)
-        gvh = graphene.String(required=False)
-        village = graphene.String(required=False)
-        lower_percentile_category = graphene.Int(required=False)
-        upper_percentile_category = graphene.Int(required=False)
-        wealth_quintiles = graphene.List(graphene.Int, required=False)
-        classification = graphene.List(graphene.Int, required=False)
-        gender = graphene.String(required=False)
-        minAge = graphene.Int(required=False)
-        maxAge = graphene.Int(required=False)
-        has_labour = graphene.Boolean(required=False)
-        labour_constrained = graphene.Boolean(required=False)
-        excluded_programme_codes = graphene.List(graphene.String, required=False)
-        household_head_gender = graphene.Int(required=False)
+        filters = GenericScalar(required=False)
 
     @classmethod
     def _validate_mutation(cls, user, **data):
@@ -135,9 +121,10 @@ class ScheduleMsrUbrIndividualsImportMutation(BaseMutation):
         try:
             client_mutation_id = data.pop('client_mutation_id', None)
             data.pop('client_mutation_label', None)
+            service_data = {**(data.get("filters") or {}), "source_type": data.get("source_type")}
             service_kwargs = MsrEtlServiceMutation._get_supported_service_kwargs(
                 UBRIndividualService,
-                data,
+                service_data,
             )
             # constructed only to validate inputs (district/ta/gvh) - no UBR call yet
             UBRIndividualService(user, **service_kwargs)
@@ -255,10 +242,7 @@ class ScheduleMsrUbrLocationsImportMutation(BaseMutation):
 
     class Input(OpenIMISMutation.Input):
         source_type = graphene.String(required=False)
-        district = graphene.String(required=False)
-        ta = graphene.String(required=False)
-        gvh = graphene.String(required=False)
-        village = graphene.String(required=False)
+        filters = GenericScalar(required=False)
 
     @classmethod
     def _validate_mutation(cls, user, **data):
@@ -271,9 +255,10 @@ class ScheduleMsrUbrLocationsImportMutation(BaseMutation):
         try:
             client_mutation_id = data.pop('client_mutation_id', None)
             data.pop('client_mutation_label', None)
+            service_data = {**(data.get("filters") or {}), "source_type": data.get("source_type")}
             service_kwargs = MsrEtlServiceMutation._get_supported_service_kwargs(
                 UBRLocationService,
-                data,
+                service_data,
             )
             # constructed only to validate inputs (e.g. gvh without ta) - no UBR call yet
             UBRLocationService(user, **service_kwargs)

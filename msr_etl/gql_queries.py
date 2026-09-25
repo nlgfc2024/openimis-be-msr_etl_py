@@ -13,6 +13,7 @@ class MsrEtlServicesListGQLType(graphene.ObjectType):
 class MsrEtlSourceTypeGQLType(graphene.ObjectType):
     value = graphene.String()
     label = graphene.String()
+    filter_schema = GenericScalar()
 
 
 class MsrEtlSourceTypesGQLType(graphene.ObjectType):
