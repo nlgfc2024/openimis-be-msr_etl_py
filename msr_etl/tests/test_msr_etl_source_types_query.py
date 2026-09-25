@@ -12,7 +12,7 @@ class ResolveMsrEtlSourceTypesTestCase(SimpleTestCase):
         self.info = MagicMock()
         self.info.context.user.has_perms.return_value = True
         self._original_sources = MsrEtlConfig.sources
-        MsrEtlConfig.sources = {"acme": {"base_url": "https://example.org"}}
+        MsrEtlConfig.sources = {"acme": {"connector": "msr_api", "base_url": "https://example.org"}}
 
     def tearDown(self):
         MsrEtlConfig.sources = self._original_sources
@@ -33,7 +33,7 @@ class ResolveMsrEtlSourceTypesTestCase(SimpleTestCase):
 
     def test_uses_configured_display_name_as_label(self):
         MsrEtlConfig.sources = {
-            "acme": {"base_url": "https://example.org", "display_name": "ACME Corp"},
+            "acme": {"connector": "msr_api", "base_url": "https://example.org", "display_name": "ACME Corp"},
         }
         result = Query.resolve_msr_etl_source_types(None, self.info)
         by_value = {option.value: option.label for option in result.individual_source_types}
@@ -49,6 +49,7 @@ class ResolveMsrEtlSourceTypesTestCase(SimpleTestCase):
         location_schema = [{"name": "district", "label": "District", "type": "location", "required": False}]
         MsrEtlConfig.sources = {
             "acme": {
+                "connector": "msr_api",
                 "base_url": "https://example.org",
                 "filter_schema": {"individual": individual_schema, "location": location_schema},
             },
