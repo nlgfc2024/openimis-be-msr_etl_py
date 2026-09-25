@@ -24,7 +24,22 @@ class ResolveMsrEtlSourceTypesTestCase(SimpleTestCase):
 
     def test_includes_ubr_and_configured_sources(self):
         result = Query.resolve_msr_etl_source_types(None, self.info)
-        self.assertIn("ubr", result.individual_source_types)
-        self.assertIn("acme", result.individual_source_types)
-        self.assertIn("ubr", result.location_source_types)
-        self.assertIn("acme", result.location_source_types)
+        individual_values = [option.value for option in result.individual_source_types]
+        location_values = [option.value for option in result.location_source_types]
+        self.assertIn("ubr", individual_values)
+        self.assertIn("acme", individual_values)
+        self.assertIn("ubr", location_values)
+        self.assertIn("acme", location_values)
+
+    def test_uses_configured_display_name_as_label(self):
+        MsrEtlConfig.sources = {
+            "acme": {"base_url": "https://example.org", "display_name": "ACME Corp"},
+        }
+        result = Query.resolve_msr_etl_source_types(None, self.info)
+        by_value = {option.value: option.label for option in result.individual_source_types}
+        self.assertEqual(by_value["acme"], "ACME Corp")
+
+    def test_falls_back_to_no_label_when_display_name_unset(self):
+        result = Query.resolve_msr_etl_source_types(None, self.info)
+        by_value = {option.value: option.label for option in result.individual_source_types}
+        self.assertIsNone(by_value["acme"])
