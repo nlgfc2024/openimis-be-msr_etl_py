@@ -9,10 +9,10 @@ from urllib3.util.retry import Retry
 from msr_etl.apps import MsrEtlConfig
 from msr_etl.auth_provider import get_auth_provider
 from msr_etl.auth_provider.base import AuthProvider
-from msr_etl.sources import DataSource
+from msr_etl.sources import DataSource, StagedDataSource
 from msr_etl.utils import get_timestamped_batch_identifier
 from location.models import Location
-from msr_etl.models import UBRWealthQuintiles
+from msr_etl.models import MsrEtlSyncUnit, UBRWealthQuintiles
 
 logger = logging.getLogger(__name__)
 
@@ -174,7 +174,7 @@ def _post_with_resilience(source_type, session, url, headers, **kwargs):
         raise DataSource.Error(f"Failed to call UBR endpoint '{url}': {exc}") from exc
 
 
-class UBRIndividualSource(DataSource):
+class UBRIndividualSource(StagedDataSource):
 
     def __init__(
         self,
@@ -281,26 +281,31 @@ class UBRIndividualSource(DataSource):
             rows.extend(chunk_rows)
         return rows
 
-    def get_district_codes(self):
-        """Enumeration for staging: local Location table only, no UBR call."""
-        return list(self._get_district_codes())
+    def enumerate_units(self):
+        units = []
+        for district_code in self._get_district_codes():
+            for ta_code in self._get_ta_codes(district_code):
+                for chunk in self._iter_percentile_chunks():
+                    units.append({
+                        "unit_type": MsrEtlSyncUnit.UnitType.PERCENTILE_CHUNK,
+                        "unit_code": f"{district_code}:{ta_code}:{chunk.start}-{chunk.stop - 1}",
+                        "district": district_code,
+                        "ta": ta_code,
+                        "percentile_range": chunk,
+                    })
+        return units
 
-    def get_ta_codes(self, district_code):
-        """Enumeration for staging: local Location table only, no UBR call."""
-        return list(self._get_ta_codes(district_code))
-
-    def get_percentile_chunks(self):
-        return list(self._iter_percentile_chunks())
-
-    def fetch_unit(self, district_code, ta_code, pmt_percentile_range):
-        """Fetch one district+TA+percentile-chunk unit for staging."""
+    def fetch_unit(self, unit):
         headers = self._get_headers()
         url = _resolve_households_url(self.source_type)
         session = _create_retry_session(self.source_type)
         return self.fetch_households(
-            session, url, headers, district_code, ta_code,
-            pmt_percentile_range=pmt_percentile_range,
+            session, url, headers, unit["district"], unit["ta"],
+            pmt_percentile_range=unit["percentile_range"],
         )
+
+    def record_identity(self, row):
+        return self.get_household_identity(row)
 
     def _iter_fetched_percentile_chunks(
         self,
@@ -665,7 +670,7 @@ class UBRIndividualSource(DataSource):
         return [value]
 
 
-class UBRLocationSource(DataSource):
+class UBRLocationSource(StagedDataSource):
 
     def __init__(
         self,
@@ -766,9 +771,46 @@ class UBRLocationSource(DataSource):
             session, url, headers, {"geo_location_type_id": 1}, "districts"
         )
 
-    def fetch_unit(self, district_code, unit_type):
+    def enumerate_units(self):
+        """District, TA, GVH and Village units per district. District and TA
+        payloads are fetched here to skip districts UBR has no TAs for, and
+        reused by fetch_unit()."""
+        units = []
+        for row in self.list_districts():
+            district_code = row.get("geo_location_code")
+            if not district_code:
+                logger.warning("Skipping district row with no geo_location_code")
+                continue
+
+            ta_payload = self.fetch_level(district_code, MsrEtlSyncUnit.UnitType.TA)
+            if not ta_payload.get("data"):
+                logger.warning("Skipping district %s because UBR returned no TAs", district_code)
+                continue
+
+            units.append({
+                "unit_type": MsrEtlSyncUnit.UnitType.DISTRICT,
+                "unit_code": district_code,
+                "district": district_code,
+                "payload": {"data_type": "D", "data": [row]},
+            })
+            units.append({
+                "unit_type": MsrEtlSyncUnit.UnitType.TA,
+                "unit_code": district_code,
+                "district": district_code,
+                "payload": ta_payload,
+            })
+            for unit_type in (MsrEtlSyncUnit.UnitType.GVH, MsrEtlSyncUnit.UnitType.VILLAGE):
+                units.append({"unit_type": unit_type, "unit_code": district_code, "district": district_code})
+        return units
+
+    def fetch_unit(self, unit):
+        if "payload" in unit:
+            return unit["payload"]
+        return self.fetch_level(unit["district"], unit["unit_type"])
+
+    def fetch_level(self, district_code, unit_type):
         """Fetch one TA/GVH/Village batch for a district, narrowed by any
-        ta/gvh/village scope set on this source, for staging."""
+        ta/gvh/village scope set on this source."""
         headers = self._get_headers()
         url = _resolve_geo_locations_url(self.source_type)
         session = _create_retry_session(self.source_type)
