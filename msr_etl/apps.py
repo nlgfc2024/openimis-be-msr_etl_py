@@ -61,16 +61,12 @@ class MsrEtlConfig(AppConfig):
 
     @classmethod
     def _load_config(cls, cfg):
-        """
-        Load all config fields that match current AppConfig class fields, all custom fields have to be loaded separately
-        """
         for field in cfg:
             if hasattr(MsrEtlConfig, field):
                 setattr(MsrEtlConfig, field, cfg[field])
 
     @classmethod
     def get_source_config(cls, source_type):
-        """Connection/auth/parsing config for a registered source_type, or {} if unconfigured."""
         return (cls.sources or {}).get(source_type, {})
 
     def ready(self):
