@@ -5,8 +5,6 @@ from msr_etl.sources import UBRIndividualSource, UBRLocationSource
 DEFAULT_SOURCE_TYPE = "ubr"
 DEFAULT_CONNECTOR = "msr_api"
 
-# connector -> (DataSource, DataAdapter). A source_type's config picks one
-# with its "connector" key; "ubr" falls back to msr_api when unset.
 INDIVIDUAL_CONNECTOR_REGISTRY = {
     "msr_api": (UBRIndividualSource, UBRIndividualAdapter),
 }
