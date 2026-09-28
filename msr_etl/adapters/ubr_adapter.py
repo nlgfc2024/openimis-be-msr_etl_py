@@ -145,6 +145,9 @@ class UBRIndividualAdapter(DataAdapter):
 
 class UBRLocationAdapter(DataAdapter):
 
+    def __init__(self, source_type: str = "ubr"):
+        self.source_type = source_type
+
     def transform(self, data: dict) -> Iterable[Any]:
         if data is None:
             raise self.Error("Invalid input, expect input not to be None")
