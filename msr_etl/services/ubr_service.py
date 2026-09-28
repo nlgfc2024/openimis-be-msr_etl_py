@@ -101,6 +101,6 @@ class UBRLocationService(MsrETLService):
                 gvh=gvh,
                 village=village,
             ),
-            adapter=adapter or adapter_cls(),
+            adapter=adapter or adapter_cls(source_type=resolved_source_type),
             sink=sink or LocationImportSink(user)
         )
