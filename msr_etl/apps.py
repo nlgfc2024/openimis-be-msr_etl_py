@@ -17,6 +17,7 @@ DEFAULT_CONFIG = {
     "job_stale_after_hours": 12,
     "sources": {
         "ubr": {
+            "connector": "msr_api",
             "auth_type": "noauth",  # noauth, basic, bearer
             "auth_basic_username": "",
             "auth_basic_password": "",
