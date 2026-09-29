@@ -1,7 +1,11 @@
 from msr_etl.adapters import DataAdapter
 from msr_etl.services.base import MsrETLService
 from msr_etl.sinks import DataSink, IndividualImportSink, LocationImportSink
-from msr_etl.source_registry import resolve_individual_source, resolve_location_source
+from msr_etl.source_registry import (
+    DEFAULT_SOURCE_TYPE,
+    resolve_individual_source,
+    resolve_location_source,
+)
 from msr_etl.sources import DataSource
 from core.models import User
 
@@ -42,9 +46,11 @@ class UBRIndividualService(MsrETLService):
             pmt_percentile_range = range(0, 11)
 
         source_cls, adapter_cls = resolve_individual_source(source_type)
+        resolved_source_type = source_type or DEFAULT_SOURCE_TYPE
 
         super().__init__(
             source=source or source_cls(
+                source_type=resolved_source_type,
                 district=district,
                 ta=ta,
                 gvh=gvh,
@@ -60,7 +66,7 @@ class UBRIndividualService(MsrETLService):
                 excluded_programme_codes=excluded_programme_codes,
                 household_head_gender=household_head_gender,
             ),
-            adapter=adapter or adapter_cls(),
+            adapter=adapter or adapter_cls(source_type=resolved_source_type),
             sink=sink or IndividualImportSink(user)
         )
 
@@ -85,9 +91,11 @@ class UBRLocationService(MsrETLService):
             raise ValueError("district is required when ta is provided")
 
         source_cls, adapter_cls = resolve_location_source(source_type)
+        resolved_source_type = source_type or DEFAULT_SOURCE_TYPE
 
         super().__init__(
             source=source or source_cls(
+                source_type=resolved_source_type,
                 district=district,
                 ta=ta,
                 gvh=gvh,

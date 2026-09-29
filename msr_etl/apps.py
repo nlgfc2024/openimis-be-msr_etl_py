@@ -3,32 +3,6 @@ from django.apps import AppConfig
 MODULE_NAME = "msr_etl"
 
 DEFAULT_CONFIG = {
-    "auth_type": "noauth",  # noauth, basic, bearer
-    "auth_basic_username": "",  # basic auth username
-    "auth_basic_password": "",  # basic auth password
-    "auth_bearer_token": "",  # bearer token
-
-    "source_http_method": "",  # valid input for requests.request required
-    "source_url": "",
-    "source_headers": {},
-    "source_batch_size": 50,
-    "source_timeout_seconds": 300,
-    "source_retry_total": 3,
-    "source_retry_backoff_factor": 1.0,
-    "source_percentile_chunk_size": 10,
-    "source_percentile_chunk_delay_seconds": 1.0,
-    "source_verify_ssl": True,
-    "source_ca_bundle_path": "",
-
-    "ubr_programme_parameter_id": 2,
-    "ubr_disability_parameter_id": 6,
-
-    "adapter_first_name_field": "firstName",
-    "adapter_last_name_field": "lastName",
-    "adapter_dob_field": "dateOfBirth",
-    "adapter_location_name_field": "locationName",
-    "adapter_location_code_field": "locationCode",
-
     "sink_model_lookup_field": "json_ext__ubr_id",
     "sink_update_existing": True,
     "sink_import_username": "",
@@ -41,44 +15,33 @@ DEFAULT_CONFIG = {
     "sync_sweep_interval_minutes": 5,
     "sync_orphan_grace_minutes": 10,
     "job_stale_after_hours": 12,
-
-    # Per-source_type connection/mapping config for sources registered in
-    # msr_etl.source_registry, e.g.:
-    # "sources": {"some_source": {"base_url": "...", "auth_type": "bearer", "field_map": {...}}}
-    # The "ubr" source keeps using the flat legacy keys above instead of this.
-    "sources": {},
+    "sources": {
+        "ubr": {
+            "auth_type": "noauth",  # noauth, basic, bearer
+            "auth_basic_username": "",
+            "auth_basic_password": "",
+            "auth_bearer_token": "",
+            "base_url": "",
+            "households_endpoint_path": "/get_households_data",
+            "geo_locations_endpoint_path": "/get_geo_locations",
+            "headers": {},
+            "timeout_seconds": 300,
+            "retry_total": 3,
+            "retry_backoff_factor": 1.0,
+            "percentile_chunk_size": 10,
+            "percentile_chunk_delay_seconds": 1.0,
+            "verify_ssl": True,
+            "ca_bundle_path": "",
+            "programme_parameter_id": 2,
+            "disability_parameter_id": 6,
+        },
+    },
 }
 
 
 class MsrEtlConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'
     name = MODULE_NAME
-
-    auth_type = None
-    auth_basic_username = None
-    auth_basic_password = None
-    auth_bearer_token = None
-
-    source_http_method = None
-    source_url = None
-    source_headers = None
-    source_batch_size = None
-    source_timeout_seconds = None
-    source_retry_total = None
-    source_retry_backoff_factor = None
-    source_percentile_chunk_size = None
-    source_percentile_chunk_delay_seconds = None
-    source_verify_ssl = None
-    source_ca_bundle_path = None
-
-    ubr_programme_parameter_id = None
-    ubr_disability_parameter_id = None
-
-    adapter_first_name_field = None
-    adapter_last_name_field = None
-    adapter_dob_field = None
-    adapter_location_name_field = None
-    adapter_location_code_field = None
 
     sink_model_lookup_field = None
     sink_update_existing = None
@@ -106,7 +69,7 @@ class MsrEtlConfig(AppConfig):
 
     @classmethod
     def get_source_config(cls, source_type):
-        """Connection/mapping config for a registered source_type, or {} if unconfigured."""
+        """Connection/auth/parsing config for a registered source_type, or {} if unconfigured."""
         return (cls.sources or {}).get(source_type, {})
 
     def ready(self):
