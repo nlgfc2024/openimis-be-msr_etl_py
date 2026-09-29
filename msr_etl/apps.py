@@ -41,6 +41,12 @@ DEFAULT_CONFIG = {
     "sync_sweep_interval_minutes": 5,
     "sync_orphan_grace_minutes": 10,
     "job_stale_after_hours": 12,
+
+    # Per-source_type connection/mapping config for sources registered in
+    # msr_etl.source_registry, e.g.:
+    # "sources": {"some_source": {"base_url": "...", "auth_type": "bearer", "field_map": {...}}}
+    # The "ubr" source keeps using the flat legacy keys above instead of this.
+    "sources": {},
 }
 
 
@@ -87,6 +93,8 @@ class MsrEtlConfig(AppConfig):
     sync_orphan_grace_minutes = None
     job_stale_after_hours = None
 
+    sources = None
+
     @classmethod
     def _load_config(cls, cfg):
         """
@@ -95,6 +103,11 @@ class MsrEtlConfig(AppConfig):
         for field in cfg:
             if hasattr(MsrEtlConfig, field):
                 setattr(MsrEtlConfig, field, cfg[field])
+
+    @classmethod
+    def get_source_config(cls, source_type):
+        """Connection/mapping config for a registered source_type, or {} if unconfigured."""
+        return (cls.sources or {}).get(source_type, {})
 
     def ready(self):
         from core.models import ModuleConfiguration
