@@ -1,15 +1,19 @@
-from msr_etl.adapters import UBRIndividualAdapter, UBRLocationAdapter
+from typing import Dict, Final, Tuple, Type
+
+from msr_etl.adapters import DataAdapter, UBRIndividualAdapter, UBRLocationAdapter
 from msr_etl.apps import MsrEtlConfig
-from msr_etl.sources import UBRIndividualSource, UBRLocationSource
+from msr_etl.sources import DataSource, UBRIndividualSource, UBRLocationSource
 
-DEFAULT_SOURCE_TYPE = "ubr"
-DEFAULT_CONNECTOR = "msr_api"
+ConnectorRegistry = Dict[str, Tuple[Type[DataSource], Type[DataAdapter]]]
 
-INDIVIDUAL_CONNECTOR_REGISTRY = {
+DEFAULT_SOURCE_TYPE: Final = "ubr"
+DEFAULT_CONNECTOR: Final = "msr_api"
+
+INDIVIDUAL_CONNECTOR_REGISTRY: ConnectorRegistry = {
     "msr_api": (UBRIndividualSource, UBRIndividualAdapter),
 }
 
-LOCATION_CONNECTOR_REGISTRY = {
+LOCATION_CONNECTOR_REGISTRY: ConnectorRegistry = {
     "msr_api": (UBRLocationSource, UBRLocationAdapter),
 }
 
