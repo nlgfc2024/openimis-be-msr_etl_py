@@ -4,6 +4,8 @@ from msr_etl.apps import MsrEtlConfig
 from msr_etl.gql_queries import (
     MsrEtlServiceGQLType,
     MsrEtlServicesListGQLType,
+    MsrEtlSourceTypeGQLType,
+    MsrEtlSourceTypesGQLType,
     MsrEtlSyncUnitsGQLType,
     MsrUbrIndividualsGQLType,
     MsrUbrLocationBatchGQLType,
@@ -17,12 +19,23 @@ from msr_etl.gql_mutations import (
     ScheduleMsrUbrIndividualsImportMutation,
     ScheduleMsrUbrLocationsImportMutation,
 )
+from msr_etl.source_registry import list_individual_source_types, list_location_source_types
 from msr_etl.sources import UBRIndividualSource, UBRLocationSource
 from msr_etl.utils import (
     get_class_by_name,
     get_classes_in_module,
     MSR_ETL_CLASS
 )
+
+
+def _source_type_options(source_types):
+    return [
+        MsrEtlSourceTypeGQLType(
+            value=source_type,
+            label=MsrEtlConfig.get_source_config(source_type).get("display_name") or None,
+        )
+        for source_type in source_types
+    ]
 
 
 class Query(graphene.ObjectType):
@@ -58,6 +71,8 @@ class Query(graphene.ObjectType):
         gvh=graphene.Argument(graphene.String, required=False),
         village=graphene.Argument(graphene.String, required=False),
     )
+
+    msr_etl_source_types = graphene.Field(MsrEtlSourceTypesGQLType)
 
     msr_etl_sync_units = graphene.Field(
         MsrEtlSyncUnitsGQLType,
@@ -167,6 +182,15 @@ class Query(graphene.ObjectType):
         return MsrUbrLocationsGQLType(
             batches=batches,
             count=sum(batch.count for batch in batches),
+        )
+
+    def resolve_msr_etl_source_types(parent, info, **kwargs):
+        if not info.context.user.has_perms(MsrEtlConfig.gql_query_msr_etl_rule_perms):
+            raise PermissionError("Unauthorized")
+
+        return MsrEtlSourceTypesGQLType(
+            individual_source_types=_source_type_options(list_individual_source_types()),
+            location_source_types=_source_type_options(list_location_source_types()),
         )
 
     def resolve_msr_etl_sync_units(parent, info, **kwargs):

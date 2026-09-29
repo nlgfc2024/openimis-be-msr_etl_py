@@ -9,12 +9,17 @@ class BasicAuthProvider(AuthProvider):
     Auth provider that add basic token authorization header for the request
     """
 
-    def get_auth_header(self) -> dict[str, str]:
-        return {"Authorization": f"Basic {BasicAuthProvider._get_token_value()}"}
+    def __init__(self, source_type: str = "ubr"):
+        self.source_type = source_type
 
-    @staticmethod
-    def _get_token_value():
-        if not MsrEtlConfig.auth_basic_username or not MsrEtlConfig.auth_basic_password:
+    def get_auth_header(self) -> dict[str, str]:
+        return {"Authorization": f"Basic {self._get_token_value()}"}
+
+    def _get_token_value(self):
+        config = MsrEtlConfig.get_source_config(self.source_type)
+        username = config.get("auth_basic_username")
+        password = config.get("auth_basic_password")
+        if not username or not password:
             raise AuthError("Basic auth credentials not provided")
-        basic_payload = f"{MsrEtlConfig.auth_basic_username}:{MsrEtlConfig.auth_basic_password}"
+        basic_payload = f"{username}:{password}"
         return base64.b64encode(basic_payload.encode("utf-8")).decode("utf-8")

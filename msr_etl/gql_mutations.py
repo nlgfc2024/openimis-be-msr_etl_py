@@ -31,6 +31,7 @@ class MsrEtlServiceMutation(BaseMutation):
 
     class Input(OpenIMISMutation.Input):
         name_of_service = graphene.String(required=True)
+        source_type = graphene.String(required=False)
         district = graphene.String(required=False)
         ta = graphene.String(required=False)
         gvh = graphene.String(required=False)
@@ -106,8 +107,9 @@ class ScheduleMsrUbrIndividualsImportMutation(BaseMutation):
     _mutation_module = "msr_etl"
 
     class Input(OpenIMISMutation.Input):
+        source_type = graphene.String(required=False)
         district = graphene.String(required=True)
-        ta = graphene.String(required=True)
+        ta = graphene.String(required=False)
         gvh = graphene.String(required=False)
         village = graphene.String(required=False)
         lower_percentile_category = graphene.Int(required=False)
@@ -252,6 +254,7 @@ class ScheduleMsrUbrLocationsImportMutation(BaseMutation):
     _mutation_module = "msr_etl"
 
     class Input(OpenIMISMutation.Input):
+        source_type = graphene.String(required=False)
         district = graphene.String(required=False)
         ta = graphene.String(required=False)
         gvh = graphene.String(required=False)

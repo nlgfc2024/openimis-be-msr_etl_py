@@ -10,6 +10,16 @@ class MsrEtlServicesListGQLType(graphene.ObjectType):
     etl_services = graphene.List(MsrEtlServiceGQLType)
 
 
+class MsrEtlSourceTypeGQLType(graphene.ObjectType):
+    value = graphene.String()
+    label = graphene.String()
+
+
+class MsrEtlSourceTypesGQLType(graphene.ObjectType):
+    individual_source_types = graphene.List(MsrEtlSourceTypeGQLType)
+    location_source_types = graphene.List(MsrEtlSourceTypeGQLType)
+
+
 class MsrUbrIndividualsGQLType(graphene.ObjectType):
     individuals = graphene.List(GenericScalar)
     count = graphene.Int()
