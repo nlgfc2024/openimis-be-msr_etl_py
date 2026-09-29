@@ -2,6 +2,7 @@ from unittest.mock import MagicMock, patch
 
 from django.test import SimpleTestCase
 
+from msr_etl.apps import MsrEtlConfig
 from msr_etl.gql_mutations import (
     MsrEtlServiceMutation,
     ScheduleMsrUbrIndividualsImportMutation,
@@ -9,10 +10,34 @@ from msr_etl.gql_mutations import (
 )
 from msr_etl.services import UBRIndividualService, UBRLocationService
 
+INDIVIDUAL_FILTER_NAMES = [
+    "lower_percentile_category", "upper_percentile_category", "wealth_quintiles", "classification",
+    "gender", "minAge", "maxAge", "has_labour", "labour_constrained",
+    "excluded_programme_codes", "household_head_gender",
+]
 
-class ScheduleMsrUbrIndividualsImportMutationTestCase(SimpleTestCase):
+
+class FilterSchemaTestMixin:
 
     def setUp(self):
+        super().setUp()
+        self._original_sources = MsrEtlConfig.sources
+        MsrEtlConfig.sources = {
+            "ubr": {
+                "filter_schema": {
+                    "individual": [{"name": "location", "type": "location", "required": True}]
+                    + [{"name": name, "type": "text"} for name in INDIVIDUAL_FILTER_NAMES],
+                    "location": [{"name": "location", "type": "location"}],
+                },
+            },
+        }
+        self.addCleanup(setattr, MsrEtlConfig, "sources", self._original_sources)
+
+
+class ScheduleMsrUbrIndividualsImportMutationTestCase(FilterSchemaTestMixin, SimpleTestCase):
+
+    def setUp(self):
+        super().setUp()
         self.user = MagicMock()
         self.user.id = 1
         self.user.has_perms.return_value = True
@@ -87,7 +112,7 @@ class ScheduleMsrUbrIndividualsImportMutationTestCase(SimpleTestCase):
             client_mutation_id="mutation-id",
             client_mutation_label="MSR auto import",
             source_type="ubr",
-            filters={**self.supported_filters, "unsupported_value": "ignored"},
+            filters=self.supported_filters,
         )
 
         self.assertIsNone(result)
@@ -132,9 +157,10 @@ class ScheduleMsrUbrIndividualsImportMutationTestCase(SimpleTestCase):
         mock_service_class.assert_not_called()
 
 
-class ScheduleMsrUbrLocationsImportMutationTestCase(SimpleTestCase):
+class ScheduleMsrUbrLocationsImportMutationTestCase(FilterSchemaTestMixin, SimpleTestCase):
 
     def setUp(self):
+        super().setUp()
         self.user = MagicMock()
         self.user.id = 1
         self.user.has_perms.return_value = True
@@ -199,6 +225,78 @@ class ScheduleMsrUbrLocationsImportMutationTestCase(SimpleTestCase):
             result[0]["message"],
             "Failed to process ScheduleMsrUbrLocationsImportMutation mutation",
         )
+
+
+class ScheduleFiltersAllowlistTestCase(FilterSchemaTestMixin, SimpleTestCase):
+
+    def setUp(self):
+        super().setUp()
+        self.user = MagicMock()
+        self.user.id = 1
+        self.user.has_perms.return_value = True
+
+    def _schedule_individuals(self, filters, **extra):
+        return ScheduleMsrUbrIndividualsImportMutation.async_mutate(self.user, filters=filters, **extra)
+
+    @patch("msr_etl.gql_mutations.run_as_scheduled_job")
+    def test_rejects_service_internals_passed_as_filters(self, mock_dispatch):
+        for key in ("sink", "source", "adapter", "user"):
+            with self.subTest(key=key):
+                result = self._schedule_individuals({"district": "101", key: {"x": 1}})
+
+                self.assertEqual(len(result), 1)
+                self.assertIn(f"Unsupported filters for source_type 'ubr': {key}", result[0]["detail"])
+        mock_dispatch.assert_not_called()
+
+    @patch("msr_etl.gql_mutations.run_as_scheduled_job")
+    def test_rejects_filters_not_in_the_schema(self, mock_dispatch):
+        result = self._schedule_individuals({"district": "101", "unknown": 1, "another": 2})
+
+        self.assertIn("another, unknown", result[0]["detail"])
+        mock_dispatch.assert_not_called()
+
+    @patch("msr_etl.gql_mutations.run_as_scheduled_job")
+    def test_reserved_keys_stay_rejected_even_if_listed_in_schema(self, mock_dispatch):
+        MsrEtlConfig.sources["ubr"]["filter_schema"]["individual"].append({"name": "sink", "type": "text"})
+
+        result = self._schedule_individuals({"district": "101", "sink": "x"})
+
+        self.assertIn("sink", result[0]["detail"])
+        mock_dispatch.assert_not_called()
+
+    @patch("msr_etl.gql_mutations.run_as_scheduled_job")
+    def test_rejects_non_object_filters(self, mock_dispatch):
+        result = self._schedule_individuals(["district"])
+
+        self.assertIn("filters must be an object", result[0]["detail"])
+        mock_dispatch.assert_not_called()
+
+    @patch("msr_etl.gql_mutations.run_as_scheduled_job")
+    def test_rejects_everything_when_source_has_no_schema_for_the_kind(self, mock_dispatch):
+        MsrEtlConfig.sources["ubr"]["filter_schema"].pop("individual")
+
+        result = self._schedule_individuals({"district": "101"})
+
+        self.assertIn("district", result[0]["detail"])
+        mock_dispatch.assert_not_called()
+
+    @patch("msr_etl.gql_mutations.run_as_scheduled_job")
+    def test_location_field_allows_hierarchy_keys(self, mock_dispatch):
+        result = ScheduleMsrUbrLocationsImportMutation.async_mutate(
+            self.user, filters={"district": "101", "ta": "10101", "gvh": "1010101", "village": "101010101"},
+        )
+
+        self.assertIsNone(result)
+        mock_dispatch.assert_called_once()
+
+    @patch("msr_etl.gql_mutations.run_as_scheduled_job")
+    def test_location_kind_uses_its_own_schema(self, mock_dispatch):
+        result = ScheduleMsrUbrLocationsImportMutation.async_mutate(
+            self.user, filters={"district": "101", "gender": "Female"},
+        )
+
+        self.assertIn("gender", result[0]["detail"])
+        mock_dispatch.assert_not_called()
 
 
 class UBRLocationServiceValidationTestCase(SimpleTestCase):
