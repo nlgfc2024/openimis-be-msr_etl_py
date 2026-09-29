@@ -109,7 +109,7 @@ class ScheduleMsrUbrIndividualsImportMutation(BaseMutation):
     class Input(OpenIMISMutation.Input):
         source_type = graphene.String(required=False)
         district = graphene.String(required=True)
-        ta = graphene.String(required=True)
+        ta = graphene.String(required=False)
         gvh = graphene.String(required=False)
         village = graphene.String(required=False)
         lower_percentile_category = graphene.Int(required=False)
