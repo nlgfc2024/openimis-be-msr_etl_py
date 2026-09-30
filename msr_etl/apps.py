@@ -17,6 +17,7 @@ DEFAULT_CONFIG = {
     "job_stale_after_hours": 12,
     "sources": {
         "ubr": {
+            "connector": "msr_api",
             "auth_type": "noauth",  # noauth, basic, bearer
             "auth_basic_username": "",
             "auth_basic_password": "",
@@ -34,6 +35,50 @@ DEFAULT_CONFIG = {
             "ca_bundle_path": "",
             "programme_parameter_id": 2,
             "disability_parameter_id": 6,
+            "filter_schema": {
+                "individual": [
+                    {"name": "location", "label": "Location", "type": "location", "required": True},
+                    {
+                        "name": "wealth_quintiles", "label": "Wealth Quintile / Classification",
+                        "type": "multiselect",
+                        "options": [
+                            {"value": 1, "label": "Poorest"},
+                            {"value": 2, "label": "Poorer"},
+                            {"value": 3, "label": "Poor"},
+                            {"value": 4, "label": "Better Off"},
+                            {"value": 5, "label": "Rich"},
+                        ],
+                    },
+                    {"name": "lower_percentile_category", "label": "Lower Percentile Category",
+                     "type": "number", "min": 0, "max": 100},
+                    {"name": "upper_percentile_category", "label": "Upper Percentile Category",
+                     "type": "number", "min": 0, "max": 100},
+                    {
+                        "name": "gender", "label": "Gender", "type": "select",
+                        "options": [{"value": "Male", "label": "Male"}, {"value": "Female", "label": "Female"}],
+                    },
+                    {"name": "minAge", "label": "Min Age", "type": "number", "min": 0},
+                    {"name": "maxAge", "label": "Max Age", "type": "number", "min": 0},
+                    {"name": "has_labour", "label": "Household Has Labour", "type": "boolean"},
+                    {"name": "labour_constrained", "label": "Household Is Labour Constrained", "type": "boolean"},
+                    {
+                        "name": "household_head_gender", "label": "Household Head Gender", "type": "select",
+                        "options": [{"value": 1, "label": "Male-headed"}, {"value": 2, "label": "Female-headed"}],
+                    },
+                    {
+                        "name": "excluded_programme_codes", "label": "Exclude Programmes", "type": "multiselect",
+                        "options": [
+                            {"value": "1", "label": "Social Cash Transfer"},
+                            {"value": "2", "label": "Public Works Programme"},
+                            {"value": "3", "label": "VSL/COMSIP"},
+                            {"value": "4", "label": "Microfinance"},
+                        ],
+                    },
+                ],
+                "location": [
+                    {"name": "location", "label": "Location", "type": "location", "required": True, "maxLevel": 3},
+                ],
+            },
         },
     },
 }

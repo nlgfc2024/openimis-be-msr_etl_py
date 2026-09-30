@@ -28,14 +28,16 @@ from msr_etl.utils import (
 )
 
 
-def _source_type_options(source_types):
-    return [
-        MsrEtlSourceTypeGQLType(
+def _source_type_options(source_types, kind):
+    def build(source_type):
+        config = MsrEtlConfig.get_source_config(source_type)
+        return MsrEtlSourceTypeGQLType(
             value=source_type,
-            label=MsrEtlConfig.get_source_config(source_type).get("display_name") or None,
+            label=config.get("display_name") or None,
+            filter_schema=(config.get("filter_schema") or {}).get(kind) or [],
         )
-        for source_type in source_types
-    ]
+
+    return [build(source_type) for source_type in source_types]
 
 
 class Query(graphene.ObjectType):
@@ -189,8 +191,8 @@ class Query(graphene.ObjectType):
             raise PermissionError("Unauthorized")
 
         return MsrEtlSourceTypesGQLType(
-            individual_source_types=_source_type_options(list_individual_source_types()),
-            location_source_types=_source_type_options(list_location_source_types()),
+            individual_source_types=_source_type_options(list_individual_source_types(), "individual"),
+            location_source_types=_source_type_options(list_location_source_types(), "location"),
         )
 
     def resolve_msr_etl_sync_units(parent, info, **kwargs):
