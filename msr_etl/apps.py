@@ -114,8 +114,12 @@ class MsrEtlConfig(AppConfig):
 
     @classmethod
     def get_source_config(cls, source_type):
-        """Connection/auth/parsing config for a registered source_type, or {} if unconfigured."""
-        return (cls.sources or {}).get(source_type, {})
+        """
+        Config for a source_type: saved keys over that source's DEFAULT_CONFIG entry, since ModuleConfiguration replaces the whole "sources" key
+        """
+        defaults = DEFAULT_CONFIG["sources"].get(source_type) or {}
+        saved = (cls.sources or {}).get(source_type) or {}
+        return {**defaults, **saved}
 
     def ready(self):
         from core.models import ModuleConfiguration
