@@ -11,7 +11,7 @@ class UBRWealthQuintiles(models.IntegerChoices):
 
 class MsrEtlSyncUnit(models.Model):
     """
-    One staged fetch unit for a core.AsyncJob UBR import. job_uuid is the
+    One staged fetch unit for a core.AsyncJob msr_etl import. job_uuid is the
     AsyncJob handle (no FK - core stays domain-free). Staging and syncing are
     separate steps so a crash or retry never re-pays the UBR fetch.
     """
@@ -23,6 +23,10 @@ class MsrEtlSyncUnit(models.Model):
         VILLAGE = "VILLAGE", "Village"
         PERCENTILE_CHUNK = "PERCENTILE_CHUNK", "Percentile chunk"
 
+    class Kind(models.TextChoices):
+        INDIVIDUAL = "individual", "Individual"
+        LOCATION = "location", "Location"
+
     class Status(models.TextChoices):
         PENDING = "PENDING", "Pending"
         STAGED = "STAGED", "Staged"
@@ -30,6 +34,10 @@ class MsrEtlSyncUnit(models.Model):
         FAILED = "FAILED", "Failed"
 
     job_uuid = models.UUIDField(db_index=True)
+    # Which source_type staged this unit and for which import, so sync can
+    # resolve the matching adapter and sink.
+    source_type = models.CharField(max_length=64, default="ubr")
+    kind = models.CharField(max_length=16, choices=Kind.choices, default=Kind.INDIVIDUAL)
     unit_type = models.CharField(max_length=32, choices=UnitType.choices)
     unit_code = models.CharField(max_length=64)
     stage_status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING)

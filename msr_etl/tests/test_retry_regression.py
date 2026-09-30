@@ -1,5 +1,5 @@
 from datetime import timedelta
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from django.test import TestCase
 from django.utils import timezone
@@ -10,6 +10,7 @@ from core.test_helpers import create_test_interactive_user
 from msr_etl.jobs import _finish
 from msr_etl.models import MsrEtlSyncUnit
 from msr_etl.scheduled_tasks import sweep_sync_units
+from msr_etl.sources import UBRLocationSource
 from msr_etl.staging import sync_staged_units
 
 
@@ -21,19 +22,33 @@ def _make_job(user, status=AsyncJob.Status.RUNNING):
 
 def _make_unit(job_uuid):
     return MsrEtlSyncUnit.objects.create(
-        job_uuid=job_uuid, unit_type=MsrEtlSyncUnit.UnitType.GVH, unit_code="101",
+        job_uuid=job_uuid, kind=MsrEtlSyncUnit.Kind.LOCATION,
+        unit_type=MsrEtlSyncUnit.UnitType.GVH, unit_code="101",
         stage_status=MsrEtlSyncUnit.Status.STAGED, sync_status=MsrEtlSyncUnit.Status.PENDING,
         raw_payload={"data_type": "G", "data": [{"geo_location_code": "1010101"}]},
     )
 
 
 class FailRetrySucceedRegressionTestCase(TestCase):
-    # Only the sink/adapter boundary is mocked - sync_staged_units, _finish,
-    # and sweep_sync_units all run for real.
+    # Only the sink/adapter boundary is mocked - registry resolution,
+    # sync_staged_units, _finish, and sweep_sync_units all run for real.
 
-    @patch("msr_etl.staging.LocationImportSink")
-    @patch("msr_etl.staging.UBRLocationAdapter")
-    def test_finish_retries_inline_and_self_closes(self, mock_adapter_class, mock_sink_class):
+    def setUp(self):
+        self.mock_adapter_class = MagicMock()
+        self.mock_sink_class = MagicMock()
+        patchers = [
+            patch.dict(
+                "msr_etl.source_registry.LOCATION_CONNECTOR_REGISTRY",
+                {"msr_api": (UBRLocationSource, self.mock_adapter_class)},
+            ),
+            patch.dict("msr_etl.staging._SINKS", {MsrEtlSyncUnit.Kind.LOCATION: self.mock_sink_class}),
+        ]
+        for patcher in patchers:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_finish_retries_inline_and_self_closes(self):
+        mock_adapter_class, mock_sink_class = self.mock_adapter_class, self.mock_sink_class
         # A normal live run resolves a transient failure on its own, without
         # ever needing the sweeper.
         user = create_test_interactive_user(username="retry_regression_tester")
@@ -60,9 +75,8 @@ class FailRetrySucceedRegressionTestCase(TestCase):
         self.assertIsNotNone(job.finished_at)
         self.assertEqual(mock_sink_class.return_value.push.call_count, 2)
 
-    @patch("msr_etl.staging.LocationImportSink")
-    @patch("msr_etl.staging.UBRLocationAdapter")
-    def test_sweeper_recovers_a_job_whose_worker_died_before_finish(self, mock_adapter_class, mock_sink_class):
+    def test_sweeper_recovers_a_job_whose_worker_died_before_finish(self):
+        mock_adapter_class, mock_sink_class = self.mock_adapter_class, self.mock_sink_class
         # Simulates a crash: the sync failed, but _finish never got to run
         # its retry loop. Only then is the sweeper the one to retry/close it.
         user = create_test_interactive_user(username="retry_regression_tester_2")

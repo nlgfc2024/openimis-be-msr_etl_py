@@ -9,8 +9,6 @@ ConnectorRegistry = Dict[str, Tuple[Type[DataSource], Type[DataAdapter]]]
 DEFAULT_SOURCE_TYPE: Final = "ubr"
 DEFAULT_CONNECTOR: Final = "msr_api"
 
-# connector -> (DataSource, DataAdapter). A source_type's config picks one
-# with its "connector" key; "ubr" falls back to msr_api when unset.
 INDIVIDUAL_CONNECTOR_REGISTRY: ConnectorRegistry = {
     "msr_api": (UBRIndividualSource, UBRIndividualAdapter),
 }

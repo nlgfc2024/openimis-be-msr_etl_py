@@ -4,12 +4,10 @@ from django.db import transaction
 from django.db.models import Case, IntegerField, Q, Value, When
 from django.utils import timezone
 
-from msr_etl.adapters import UBRIndividualAdapter, UBRLocationAdapter
 from msr_etl.apps import MsrEtlConfig
 from msr_etl.models import MsrEtlSyncUnit
-from msr_etl.services import UBRIndividualService, UBRLocationService
 from msr_etl.sinks import IndividualImportSink, LocationImportSink
-from msr_etl.sources.ubr_source import UBRIndividualSource
+from msr_etl.source_registry import resolve_individual_source, resolve_location_source
 
 logger = logging.getLogger(__name__)
 
@@ -22,31 +20,23 @@ _LOCATION_UNIT_SYNC_PRIORITY = Case(
     output_field=IntegerField(),
 )
 
+_RESOLVERS = {
+    MsrEtlSyncUnit.Kind.INDIVIDUAL: resolve_individual_source,
+    MsrEtlSyncUnit.Kind.LOCATION: resolve_location_source,
+}
 
-def enumerate_individual_units(user, params):
-    """District x TA x percentile chunk, from the local Location table and
-    arithmetic only - no UBR call."""
-    source = UBRIndividualService(user, **params).source
-    units = []
-    for district_code in source.get_district_codes():
-        for ta_code in source.get_ta_codes(district_code):
-            for chunk in source.get_percentile_chunks():
-                lower, upper = chunk.start, chunk.stop - 1
-                units.append({
-                    "district": district_code,
-                    "ta": ta_code,
-                    "percentile_range": chunk,
-                    "unit_code": f"{district_code}:{ta_code}:{lower}-{upper}",
-                })
-    return source, units
+_SINKS = {
+    MsrEtlSyncUnit.Kind.INDIVIDUAL: IndividualImportSink,
+    MsrEtlSyncUnit.Kind.LOCATION: LocationImportSink,
+}
 
 
-def _seen_household_identities(job_uuid):
+def _seen_record_identities(job_uuid):
     seen = set()
     identity_lists = MsrEtlSyncUnit.objects.filter(
         job_uuid=job_uuid,
-        unit_type=MsrEtlSyncUnit.UnitType.PERCENTILE_CHUNK,
         stage_status=MsrEtlSyncUnit.Status.STAGED,
+        record_identities__isnull=False,
     ).values_list("record_identities", flat=True)
     for identities in identity_lists:
         for identity in identities or []:
@@ -54,103 +44,51 @@ def _seen_household_identities(job_uuid):
     return seen
 
 
-def stage_individual_unit(job_uuid, source, unit):
-    """Fetch one district+TA+percentile-chunk unit and stage it, deduping
-    against households already staged by sibling units of the same job."""
+def _dedupe_rows(job_uuid, source, rows):
+    """Drop rows already staged by sibling units of the same job."""
+    seen = _seen_record_identities(job_uuid)
+    unique_rows = []
+    new_identities = []
+    for row in rows:
+        identity = source.record_identity(row)
+        if identity is not None:
+            if identity in seen:
+                continue
+            seen.add(identity)
+            new_identities.append(list(identity))
+        unique_rows.append(row)
+    return unique_rows, new_identities
+
+
+def stage_unit(job_uuid, source, unit, kind):
+    """Fetch one unit from a StagedDataSource and stage its payload. List
+    payloads are deduped via source.record_identity()."""
     sync_unit = MsrEtlSyncUnit.objects.create(
         job_uuid=job_uuid,
-        unit_type=MsrEtlSyncUnit.UnitType.PERCENTILE_CHUNK,
+        source_type=source.source_type,
+        kind=kind,
+        unit_type=unit["unit_type"],
         unit_code=unit["unit_code"],
     )
     try:
-        rows = source.fetch_unit(unit["district"], unit["ta"], unit["percentile_range"])
-        seen = _seen_household_identities(job_uuid)
-        unique_rows = []
-        new_identities = []
-        for row in rows:
-            identity = UBRIndividualSource.get_household_identity(row)
-            if identity is not None:
-                if identity in seen:
-                    continue
-                seen.add(identity)
-                new_identities.append(list(identity))
-            unique_rows.append(row)
-
-        MsrEtlSyncUnit.objects.filter(id=sync_unit.id).update(
-            stage_status=MsrEtlSyncUnit.Status.STAGED,
-            raw_payload=unique_rows,
-            record_count=len(unique_rows),
-            record_identities=new_identities,
-            updated_at=timezone.now(),
-        )
-        return True
-    except Exception as exc:
-        logger.warning("Failed to stage unit %s: %s", unit["unit_code"], exc)
-        MsrEtlSyncUnit.objects.filter(id=sync_unit.id).update(
-            stage_status=MsrEtlSyncUnit.Status.FAILED,
-            error_detail=str(exc)[:2000],
-            updated_at=timezone.now(),
-        )
-        return False
-
-
-def enumerate_location_units(user, params=None):
-    source = UBRLocationService(user, **(params or {})).source
-    district_rows = source.list_districts()
-    units = []
-    for row in district_rows:
-        district_code = row.get("geo_location_code")
-        if not district_code:
-            logger.warning("Skipping district row with no geo_location_code")
-            continue
-
-        ta_payload = source.fetch_unit(district_code, MsrEtlSyncUnit.UnitType.TA)
-        if not ta_payload.get("data"):
-            logger.warning("Skipping district %s because UBR returned no TAs", district_code)
-            continue
-
-        units.append({
-            "district": district_code,
-            "unit_type": MsrEtlSyncUnit.UnitType.DISTRICT,
-            "payload": {"data_type": "D", "data": [row]},
-        })
-        units.append({
-            "district": district_code,
-            "unit_type": MsrEtlSyncUnit.UnitType.TA,
-            "payload": ta_payload,
-        })
-        for unit_type in (
-            MsrEtlSyncUnit.UnitType.GVH,
-            MsrEtlSyncUnit.UnitType.VILLAGE,
-        ):
-            units.append({"district": district_code, "unit_type": unit_type})
-    return source, units
-
-
-def stage_location_unit(job_uuid, source, unit):
-    sync_unit = MsrEtlSyncUnit.objects.create(
-        job_uuid=job_uuid,
-        unit_type=unit["unit_type"],
-        unit_code=unit["district"],
-    )
-    try:
-        if unit["unit_type"] in (MsrEtlSyncUnit.UnitType.DISTRICT, MsrEtlSyncUnit.UnitType.TA):
-            payload = unit["payload"]
+        payload = source.fetch_unit(unit)
+        fields = {}
+        if isinstance(payload, list):
+            payload, fields["record_identities"] = _dedupe_rows(job_uuid, source, payload)
+            record_count = len(payload)
         else:
-            payload = source.fetch_unit(unit["district"], unit["unit_type"])
+            record_count = len(payload.get("data") or [])
 
         MsrEtlSyncUnit.objects.filter(id=sync_unit.id).update(
             stage_status=MsrEtlSyncUnit.Status.STAGED,
             raw_payload=payload,
-            record_count=len(payload.get("data") or []),
+            record_count=record_count,
             updated_at=timezone.now(),
+            **fields,
         )
         return True
     except Exception as exc:
-        logger.warning(
-            "Failed to stage %s unit for district %s: %s",
-            unit["unit_type"], unit["district"], exc,
-        )
+        logger.warning("Failed to stage %s unit %s: %s", unit["unit_type"], unit["unit_code"], exc)
         MsrEtlSyncUnit.objects.filter(id=sync_unit.id).update(
             stage_status=MsrEtlSyncUnit.Status.FAILED,
             error_detail=str(exc)[:2000],
@@ -160,15 +98,12 @@ def stage_location_unit(job_uuid, source, unit):
 
 
 def _sync_unit_payload(unit, user):
-    if unit.unit_type == MsrEtlSyncUnit.UnitType.PERCENTILE_CHUNK:
-        transformed = UBRIndividualAdapter().transform(unit.raw_payload or [])
-        sink = IndividualImportSink(user)
-    else:
-        transformed = UBRLocationAdapter().transform(unit.raw_payload or {})
-        sink = LocationImportSink(user)
-
+    if unit.raw_payload is None:
+        return
+    _, adapter_cls = _RESOLVERS[unit.kind](unit.source_type)
+    transformed = adapter_cls(source_type=unit.source_type).transform(unit.raw_payload)
     if transformed:
-        sink.push(transformed, f"job_{unit.job_uuid}_unit_{unit.id}")
+        _SINKS[unit.kind](user).push(transformed, f"job_{unit.job_uuid}_unit_{unit.id}")
 
 
 @transaction.atomic

@@ -7,6 +7,7 @@ from django.test import SimpleTestCase, TestCase
 
 from msr_etl.apps import MsrEtlConfig
 from msr_etl.auth_provider import get_auth_provider
+from msr_etl.models import MsrEtlSyncUnit
 from msr_etl.sources import UBRIndividualSource, UBRLocationSource
 from msr_etl.sources.ubr_source import (
     _DEFAULT_GEO_LOCATIONS_URL,
@@ -618,64 +619,161 @@ class UBRLocationSourceTestCase(TestCase):
         self.assertEqual(len(districts), 2)
 
     @patch("requests.Session.post")
-    def test_fetch_unit_narrows_ta_by_scope(self, mock_post):
+    def test_fetch_level_narrows_ta_by_scope(self, mock_post):
         mock_post.return_value = MagicMock(ok=True, json=MagicMock(return_value=self.mocked_tas_response[0]))
         source = UBRLocationSource(get_auth_provider("noauth"), district="101", ta="10102")
 
-        result = source.fetch_unit("101", "TA")
+        result = source.fetch_level("101", "TA")
 
         self.assertEqual([row["geo_location_code"] for row in result["data"]], ["10102"])
 
     @patch("requests.Session.post")
-    def test_fetch_unit_narrows_gvh_by_ta_and_gvh_scope(self, mock_post):
+    def test_fetch_level_narrows_gvh_by_ta_and_gvh_scope(self, mock_post):
         mock_post.return_value = MagicMock(ok=True, json=MagicMock(return_value=self.mocked_gvhs_response[0]))
         source = UBRLocationSource(get_auth_provider("noauth"), district="101", ta="10101", gvh="1010102")
 
-        result = source.fetch_unit("101", "GVH")
+        result = source.fetch_level("101", "GVH")
 
         self.assertEqual([row["geo_location_code"] for row in result["data"]], ["1010102"])
 
     @patch("requests.Session.post")
-    def test_fetch_unit_ta_scope_does_not_narrow_gvh(self, mock_post):
+    def test_fetch_level_ta_scope_does_not_narrow_gvh(self, mock_post):
         mock_post.return_value = MagicMock(ok=True, json=MagicMock(return_value=self.mocked_gvhs_response[0]))
         source = UBRLocationSource(get_auth_provider("noauth"), district="101", ta="10101")
 
-        result = source.fetch_unit("101", "GVH")
+        result = source.fetch_level("101", "GVH")
 
         self.assertEqual(len(result["data"]), 2)
 
     @patch("requests.Session.post")
-    def test_fetch_unit_narrows_village_by_ta_prefix_without_gvh(self, mock_post):
+    def test_fetch_level_narrows_village_by_ta_prefix_without_gvh(self, mock_post):
         mock_post.return_value = MagicMock(ok=True, json=MagicMock(return_value=self.mocked_villages_response[0]))
         source = UBRLocationSource(get_auth_provider("noauth"), district="101", ta="10101")
 
-        result = source.fetch_unit("101", "VILLAGE")
+        result = source.fetch_level("101", "VILLAGE")
 
         self.assertEqual(len(result["data"]), 2)
 
         other_ta_source = UBRLocationSource(get_auth_provider("noauth"), district="101", ta="10102")
-        other_result = other_ta_source.fetch_unit("101", "VILLAGE")
+        other_result = other_ta_source.fetch_level("101", "VILLAGE")
         self.assertEqual(other_result["data"], [])
 
     @patch("requests.Session.post")
-    def test_fetch_unit_narrows_village_by_gvh_scope(self, mock_post):
+    def test_fetch_level_narrows_village_by_gvh_scope(self, mock_post):
         mock_post.return_value = MagicMock(ok=True, json=MagicMock(return_value=self.mocked_villages_response[0]))
         source = UBRLocationSource(get_auth_provider("noauth"), district="101", ta="10101", gvh="does-not-match")
 
-        result = source.fetch_unit("101", "VILLAGE")
+        result = source.fetch_level("101", "VILLAGE")
 
         self.assertEqual(result["data"], [])
 
     @patch("requests.Session.post")
-    def test_fetch_unit_narrows_village_by_village_scope(self, mock_post):
+    def test_fetch_level_narrows_village_by_village_scope(self, mock_post):
         mock_post.return_value = MagicMock(ok=True, json=MagicMock(return_value=self.mocked_villages_response[0]))
         source = UBRLocationSource(
             get_auth_provider("noauth"), district="101", ta="10101", gvh="10101", village="101010102",
         )
 
-        result = source.fetch_unit("101", "VILLAGE")
+        result = source.fetch_level("101", "VILLAGE")
 
         self.assertEqual([row["geo_location_code"] for row in result["data"]], ["101010102"])
+
+
+class UBRIndividualSourceStagingTestCase(SimpleTestCase):
+
+    def setUp(self):
+        self.source = UBRIndividualSource(get_auth_provider("noauth"), pmt_percentile_range=range(0, 20))
+
+    @patch.object(UBRIndividualSource, "_get_ta_codes", return_value=["10101"])
+    @patch.object(UBRIndividualSource, "_get_district_codes", return_value=["101"])
+    @patch.object(UBRIndividualSource, "_iter_percentile_chunks", return_value=[range(0, 10), range(10, 20)])
+    def test_enumerate_units_builds_district_ta_percentile_grid(self, *_):
+        units = self.source.enumerate_units()
+
+        self.assertEqual([u["unit_code"] for u in units], ["101:10101:0-9", "101:10101:10-19"])
+        self.assertTrue(all(u["unit_type"] == MsrEtlSyncUnit.UnitType.PERCENTILE_CHUNK for u in units))
+        self.assertEqual(units[1]["percentile_range"], range(10, 20))
+
+    @patch.object(UBRIndividualSource, "fetch_households", return_value=[{"id": 1}])
+    def test_fetch_unit_fetches_the_units_district_ta_and_chunk(self, mock_fetch):
+        unit = {"district": "101", "ta": "10101", "percentile_range": range(0, 10)}
+
+        rows = self.source.fetch_unit(unit)
+
+        self.assertEqual(rows, [{"id": 1}])
+        args, kwargs = mock_fetch.call_args
+        self.assertEqual(args[3:], ("101", "10101"))
+        self.assertEqual(kwargs["pmt_percentile_range"], range(0, 10))
+
+    def test_record_identity_uses_household_identity(self):
+        self.assertEqual(self.source.record_identity({"id": 7}), ("id", "7"))
+        self.assertIsNone(self.source.record_identity({}))
+
+
+class UBRLocationSourceStagingTestCase(SimpleTestCase):
+
+    def setUp(self):
+        self.source = UBRLocationSource(get_auth_provider("noauth"))
+
+    def test_enumerate_units_builds_four_units_per_district(self):
+        districts = [
+            {"geo_location_code": "101", "geo_location_name": "Chitipa"},
+            {"geo_location_code": "102", "geo_location_name": "Karonga"},
+        ]
+        ta_payload = {"data_type": "T", "data": [{"geo_location_code": "10101"}]}
+        with patch.object(UBRLocationSource, "list_districts", return_value=districts), \
+                patch.object(UBRLocationSource, "fetch_level", return_value=ta_payload):
+            units = self.source.enumerate_units()
+
+        self.assertEqual(len(units), 8)
+        self.assertEqual(
+            [u["unit_type"] for u in units if u["district"] == "101"],
+            [
+                MsrEtlSyncUnit.UnitType.DISTRICT,
+                MsrEtlSyncUnit.UnitType.TA,
+                MsrEtlSyncUnit.UnitType.GVH,
+                MsrEtlSyncUnit.UnitType.VILLAGE,
+            ],
+        )
+        ta_unit = next(u for u in units if u["district"] == "101" and u["unit_type"] == MsrEtlSyncUnit.UnitType.TA)
+        self.assertEqual(ta_unit["payload"], ta_payload)
+        self.assertEqual(ta_unit["unit_code"], "101")
+
+    def test_enumerate_units_skips_district_row_missing_code(self):
+        with patch.object(UBRLocationSource, "list_districts", return_value=[{"geo_location_name": "No code"}]), \
+                patch.object(UBRLocationSource, "fetch_level") as mock_fetch_level:
+            units = self.source.enumerate_units()
+
+        self.assertEqual(units, [])
+        mock_fetch_level.assert_not_called()
+
+    def test_enumerate_units_skips_district_with_no_tas(self):
+        districts = [{"geo_location_code": "101"}, {"geo_location_code": "102"}]
+
+        def fetch_level(district_code, unit_type):
+            if district_code == "101":
+                return {"data_type": "T", "data": []}
+            return {"data_type": "T", "data": [{"geo_location_code": "10201"}]}
+
+        with patch.object(UBRLocationSource, "list_districts", return_value=districts), \
+                patch.object(UBRLocationSource, "fetch_level", side_effect=fetch_level):
+            units = self.source.enumerate_units()
+
+        self.assertEqual([u["district"] for u in units], ["102", "102", "102", "102"])
+
+    def test_fetch_unit_reuses_enumeration_payload(self):
+        payload = {"data_type": "D", "data": [{"geo_location_code": "101"}]}
+        with patch.object(UBRLocationSource, "fetch_level") as mock_fetch_level:
+            result = self.source.fetch_unit({"district": "101", "unit_type": "DISTRICT", "payload": payload})
+
+        self.assertIs(result, payload)
+        mock_fetch_level.assert_not_called()
+
+    def test_fetch_unit_fetches_levels_without_payload(self):
+        with patch.object(UBRLocationSource, "fetch_level", return_value={"data": []}) as mock_fetch_level:
+            self.source.fetch_unit({"district": "101", "unit_type": "GVH"})
+
+        mock_fetch_level.assert_called_once_with("101", "GVH")
 
 
 class ResolveSourceUrlTestCase(SimpleTestCase):

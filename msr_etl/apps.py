@@ -105,9 +105,6 @@ class MsrEtlConfig(AppConfig):
 
     @classmethod
     def _load_config(cls, cfg):
-        """
-        Load all config fields that match current AppConfig class fields, all custom fields have to be loaded separately
-        """
         for field in cfg:
             if hasattr(MsrEtlConfig, field):
                 setattr(MsrEtlConfig, field, cfg[field])
