@@ -705,6 +705,9 @@ class UBRIndividualSourceStagingTestCase(SimpleTestCase):
         self.assertEqual(args[3:], ("101", "10101"))
         self.assertEqual(kwargs["pmt_percentile_range"], range(0, 10))
 
+    def test_count_records_counts_list_rows(self):
+        self.assertEqual(self.source.count_records([{"id": 1}, {"id": 2}]), 2)
+
     def test_record_identity_uses_household_identity(self):
         self.assertEqual(self.source.record_identity({"id": 7}), ("id", "7"))
         self.assertIsNone(self.source.record_identity({}))
@@ -760,6 +763,10 @@ class UBRLocationSourceStagingTestCase(SimpleTestCase):
             units = self.source.enumerate_units()
 
         self.assertEqual([u["district"] for u in units], ["102", "102", "102", "102"])
+
+    def test_count_records_counts_rows_under_data(self):
+        self.assertEqual(self.source.count_records({"data_type": "G", "data": [{}, {}, {}]}), 3)
+        self.assertEqual(self.source.count_records({"data_type": "G", "data": None}), 0)
 
     def test_fetch_unit_reuses_enumeration_payload(self):
         payload = {"data_type": "D", "data": [{"geo_location_code": "101"}]}

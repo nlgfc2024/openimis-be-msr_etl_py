@@ -31,5 +31,10 @@ class StagedDataSource(DataSource, metaclass=abc.ABCMeta):
     def fetch_unit(self, unit: dict) -> Any:
         raise NotImplementedError("fetch_unit() not implemented")
 
+    @abc.abstractmethod
+    def count_records(self, payload: Any) -> int:
+        """Number of records in a payload returned by fetch_unit()."""
+        raise NotImplementedError("count_records() not implemented")
+
     def record_identity(self, row: dict) -> Optional[tuple]:
         return None
