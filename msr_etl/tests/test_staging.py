@@ -20,6 +20,7 @@ def _source(source_type="ubr"):
     source = MagicMock()
     source.source_type = source_type
     source.record_identity.side_effect = UBRIndividualSource.get_household_identity
+    source.count_records.side_effect = len
     return source
 
 
@@ -105,6 +106,7 @@ class StageUnitDictPayloadTestCase(TestCase):
 
     def test_counts_records_under_data_and_skips_dedup(self):
         source = _source()
+        source.count_records.side_effect = lambda payload: len(payload["data"])
         source.fetch_unit.return_value = {"data_type": "G", "data": [{"geo_location_code": "1010101"}]}
 
         result = stage_unit(self.job_uuid, source, self.unit, LOCATION)
@@ -115,6 +117,18 @@ class StageUnitDictPayloadTestCase(TestCase):
         self.assertEqual(sync_unit.kind, LOCATION)
         self.assertEqual(sync_unit.record_count, 1)
         self.assertIsNone(sync_unit.record_identities)
+
+    def test_record_count_comes_from_the_source(self):
+        source = _source()
+        source.fetch_unit.return_value = {"rows": [1, 2, 3]}
+        source.count_records.side_effect = None
+        source.count_records.return_value = 42
+
+        stage_unit(self.job_uuid, source, self.unit, LOCATION)
+
+        source.count_records.assert_called_once_with({"rows": [1, 2, 3]})
+        sync_unit = MsrEtlSyncUnit.objects.get(job_uuid=self.job_uuid, unit_type=MsrEtlSyncUnit.UnitType.GVH)
+        self.assertEqual(sync_unit.record_count, 42)
 
     def test_marks_failed_on_fetch_error(self):
         source = _source()
