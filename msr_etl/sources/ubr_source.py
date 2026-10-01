@@ -304,6 +304,9 @@ class UBRIndividualSource(StagedDataSource):
             pmt_percentile_range=unit["percentile_range"],
         )
 
+    def count_records(self, payload):
+        return len(payload)
+
     def record_identity(self, row):
         return self.get_household_identity(row)
 
@@ -802,6 +805,9 @@ class UBRLocationSource(StagedDataSource):
             for unit_type in (MsrEtlSyncUnit.UnitType.GVH, MsrEtlSyncUnit.UnitType.VILLAGE):
                 units.append({"unit_type": unit_type, "unit_code": district_code, "district": district_code})
         return units
+
+    def count_records(self, payload):
+        return len(payload.get("data") or [])
 
     def fetch_unit(self, unit):
         if "payload" in unit:
