@@ -75,14 +75,11 @@ def stage_unit(job_uuid, source, unit, kind):
         fields = {}
         if isinstance(payload, list):
             payload, fields["record_identities"] = _dedupe_rows(job_uuid, source, payload)
-            record_count = len(payload)
-        else:
-            record_count = len(payload.get("data") or [])
 
         MsrEtlSyncUnit.objects.filter(id=sync_unit.id).update(
             stage_status=MsrEtlSyncUnit.Status.STAGED,
             raw_payload=payload,
-            record_count=record_count,
+            record_count=source.count_records(payload),
             updated_at=timezone.now(),
             **fields,
         )
