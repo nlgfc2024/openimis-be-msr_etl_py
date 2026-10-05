@@ -1,3 +1,5 @@
+import inspect
+
 from msr_etl.adapters import DataAdapter
 from msr_etl.services.base import MsrETLService
 from msr_etl.sinks import DataSink, IndividualImportSink, LocationImportSink
@@ -8,6 +10,13 @@ from msr_etl.source_registry import (
 )
 from msr_etl.sources import DataSource
 from core.models import User
+
+
+def _build_source(source_cls, **kwargs):
+    """Construct a connector's source with only the arguments it accepts; filters
+    were already allowlisted against the source's filter_schema."""
+    accepted = inspect.signature(source_cls.__init__).parameters
+    return source_cls(**{key: value for key, value in kwargs.items() if key in accepted})
 
 
 class UBRIndividualService(MsrETLService):
@@ -49,7 +58,8 @@ class UBRIndividualService(MsrETLService):
         resolved_source_type = source_type or DEFAULT_SOURCE_TYPE
 
         super().__init__(
-            source=source or source_cls(
+            source=source or _build_source(
+                source_cls,
                 source_type=resolved_source_type,
                 district=district,
                 ta=ta,
