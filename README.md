@@ -93,8 +93,9 @@ Each entry under `sources` is one `source_type`. Its `connector` picks the code 
 | `kind` | `individual`, `location` or `both` (default): which imports offer this source |
 | `base_url` | API base URL. For `msr_api`, empty falls back to `https://malawiubr.org/api/v2` |
 | `households_endpoint_path`, `geo_locations_endpoint_path` | Endpoint paths appended to `base_url` |
-| `auth_type` | `noauth`, `basic` or `bearer`, with the matching credential keys |
+| `auth_type` | `noauth`, `basic` or `bearer`, with the matching credential keys; `openimis_jwt` logs in to a remote openIMIS `base_url` via `tokenAuth` with `auth_basic_username`/`auth_basic_password` and sends `Authorization: Bearer` |
 | `headers` | Extra request headers |
+| `user_agent` | Optional User-Agent; a remote openIMIS needs it listed in its `USER_AGENT_CSRF_BYPASS` env var for list queries outside dev mode |
 | `timeout_seconds`, `retry_total`, `retry_backoff_factor` | Per-request timeout and retry policy |
 | `percentile_chunk_size`, `percentile_chunk_delay_seconds` | Percentile categories per household request, and the pause between them |
 | `verify_ssl`, `ca_bundle_path` | TLS verification; see below |
