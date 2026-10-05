@@ -1,3 +1,5 @@
+import inspect
+
 from msr_etl.adapters import DataAdapter
 from msr_etl.services.base import MsrETLService
 from msr_etl.sinks import DataSink, IndividualImportSink, LocationImportSink
@@ -8,6 +10,18 @@ from msr_etl.source_registry import (
 )
 from msr_etl.sources import DataSource
 from core.models import User
+
+
+def _build_source(source_cls, source_type, defaults=None, filters=None):
+    """Construct a connector's source. Service defaults it doesn't take are left
+    out; a filter the user sent that it doesn't take is an error, never dropped."""
+    accepted = inspect.signature(source_cls.__init__).parameters
+    filters = {key: value for key, value in (filters or {}).items() if value is not None}
+    unsupported = sorted(key for key in filters if key not in accepted)
+    if unsupported:
+        raise ValueError(f"Source '{source_type}' does not support filters: {', '.join(unsupported)}")
+    kwargs = {key: value for key, value in (defaults or {}).items() if key in accepted}
+    return source_cls(source_type=source_type, **kwargs, **filters)
 
 
 class UBRIndividualService(MsrETLService):
@@ -38,33 +52,39 @@ class UBRIndividualService(MsrETLService):
         if village and not gvh:
             raise ValueError("gvh is required when village is provided")
 
+        percentile_filter = {}
+        percentile_default = {}
         if lower_percentile_category is not None or upper_percentile_category is not None:
             lower = 0 if lower_percentile_category is None else lower_percentile_category
             upper = 100 if upper_percentile_category is None else upper_percentile_category
-            pmt_percentile_range = range(lower, upper + 1)
+            percentile_filter["pmt_percentile_range"] = range(lower, upper + 1)
         else:
-            pmt_percentile_range = range(0, 11)
+            percentile_default["pmt_percentile_range"] = range(0, 11)
 
         source_cls, adapter_cls = resolve_individual_source(source_type)
         resolved_source_type = source_type or DEFAULT_SOURCE_TYPE
 
         super().__init__(
-            source=source or source_cls(
-                source_type=resolved_source_type,
-                district=district,
-                ta=ta,
-                gvh=gvh,
-                village=village,
-                pmt_percentile_range=pmt_percentile_range,
-                wealth_quintiles=wealth_quintiles,
-                classification=classification,
-                gender=gender,
-                min_age=minAge,
-                max_age=maxAge,
-                has_labour=has_labour,
-                labour_constrained=labour_constrained,
-                excluded_programme_codes=excluded_programme_codes,
-                household_head_gender=household_head_gender,
+            source=source or _build_source(
+                source_cls,
+                resolved_source_type,
+                defaults=percentile_default,
+                filters={
+                    "district": district,
+                    "ta": ta,
+                    "gvh": gvh,
+                    "village": village,
+                    **percentile_filter,
+                    "wealth_quintiles": wealth_quintiles,
+                    "classification": classification,
+                    "gender": gender,
+                    "min_age": minAge,
+                    "max_age": maxAge,
+                    "has_labour": has_labour,
+                    "labour_constrained": labour_constrained,
+                    "excluded_programme_codes": excluded_programme_codes,
+                    "household_head_gender": household_head_gender,
+                },
             ),
             adapter=adapter or adapter_cls(source_type=resolved_source_type),
             sink=sink or IndividualImportSink(user)
