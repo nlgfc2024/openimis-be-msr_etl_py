@@ -1,15 +1,19 @@
 import json
 import logging
-import os
-import requests
 import time
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 
 from msr_etl.apps import MsrEtlConfig
 from msr_etl.auth_provider import get_auth_provider
 from msr_etl.auth_provider.base import AuthProvider
 from msr_etl.sources import DataSource, StagedDataSource
+from msr_etl.sources.http import (
+    create_retry_session,
+    get_float_config,
+    get_int_config,
+    get_user_agent_header,
+    post_with_resilience,
+    resolve_source_url,
+)
 from msr_etl.utils import get_timestamped_batch_identifier
 from location.models import Location
 from msr_etl.models import MsrEtlSyncUnit, UBRWealthQuintiles
@@ -25,153 +29,34 @@ _LOCATION_UNIT_GEO_TYPE_ID = {"TA": 2, "GVH": 4, "VILLAGE": 11}
 _LOCATION_UNIT_DATA_TYPE = {"DISTRICT": "D", "TA": "T", "GVH": "G", "VILLAGE": "V"}
 
 
-def _get_int_config(value, default):
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _get_float_config(value, default):
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _get_bool_config(value, default):
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"true", "1", "yes", "y", "on"}:
-            return True
-        if normalized in {"false", "0", "no", "n", "off"}:
-            return False
-    return default
-
-
-def _get_source_timeout_seconds(source_type):
-    config = MsrEtlConfig.get_source_config(source_type)
-    return _get_int_config(config.get("timeout_seconds"), 300)
-
-
 def _get_endpoint_path(source_type, config_key, default_path):
     config = MsrEtlConfig.get_source_config(source_type)
     return str(config.get(config_key) or default_path).strip()
 
 
-def _resolve_source_url(source_type, default_url, endpoint_path):
-    config = MsrEtlConfig.get_source_config(source_type)
-    configured = str(config.get("base_url") or "").strip()
-    if not configured:
-        return default_url
-
-    if configured.startswith("http://") or configured.startswith("https://"):
-        if configured.endswith(endpoint_path):
-            return configured
-        if configured.endswith("/"):
-            return f"{configured[:-1]}{endpoint_path}"
-        return f"{configured}{endpoint_path}"
-
-    logger.warning("Ignoring invalid base_url for msr_etl source '%s': %s", source_type, configured)
-    return default_url
-
-
 def _resolve_households_url(source_type):
     endpoint_path = _get_endpoint_path(source_type, "households_endpoint_path", _DEFAULT_HOUSEHOLDS_ENDPOINT_PATH)
-    return _resolve_source_url(source_type, _DEFAULT_HOUSEHOLDS_URL, endpoint_path)
+    return resolve_source_url(source_type, _DEFAULT_HOUSEHOLDS_URL, endpoint_path)
 
 
 def _resolve_geo_locations_url(source_type):
     endpoint_path = _get_endpoint_path(
         source_type, "geo_locations_endpoint_path", _DEFAULT_GEO_LOCATIONS_ENDPOINT_PATH
     )
-    return _resolve_source_url(source_type, _DEFAULT_GEO_LOCATIONS_URL, endpoint_path)
-
-
-def _get_retry_total(source_type):
-    config = MsrEtlConfig.get_source_config(source_type)
-    return max(_get_int_config(config.get("retry_total"), 3), 0)
-
-
-def _get_retry_backoff_factor(source_type):
-    config = MsrEtlConfig.get_source_config(source_type)
-    return max(_get_float_config(config.get("retry_backoff_factor"), 1.0), 0.0)
+    return resolve_source_url(source_type, _DEFAULT_GEO_LOCATIONS_URL, endpoint_path)
 
 
 def _get_percentile_chunk_size(source_type):
     config = MsrEtlConfig.get_source_config(source_type)
-    return max(_get_int_config(config.get("percentile_chunk_size"), 10), 1)
+    return max(get_int_config(config.get("percentile_chunk_size"), 10), 1)
 
 
 def _get_percentile_chunk_delay_seconds(source_type):
     config = MsrEtlConfig.get_source_config(source_type)
     return max(
-        _get_float_config(config.get("percentile_chunk_delay_seconds"), 1.0),
+        get_float_config(config.get("percentile_chunk_delay_seconds"), 1.0),
         0.0,
     )
-
-
-def _get_ssl_verify_setting(source_type):
-    config = MsrEtlConfig.get_source_config(source_type)
-    verify_ssl = _get_bool_config(config.get("verify_ssl"), True)
-    ca_bundle_path = str(config.get("ca_bundle_path") or "").strip()
-
-    if not verify_ssl:
-        logger.warning("verify_ssl is disabled for msr_etl source '%s'; TLS certificate verification is OFF", source_type)
-        return False
-
-    if ca_bundle_path:
-        if not os.path.isfile(ca_bundle_path):
-            raise DataSource.Error(
-                f"ca_bundle_path is configured for source '{source_type}' but file was not found: '{ca_bundle_path}'"
-            )
-        return ca_bundle_path
-
-    return True
-
-
-def _create_retry_session(source_type):
-    retry_total = _get_retry_total(source_type)
-    retry = Retry(
-        total=retry_total,
-        connect=retry_total,
-        read=retry_total,
-        status=retry_total,
-        backoff_factor=_get_retry_backoff_factor(source_type),
-        status_forcelist=(429, 500, 502, 503, 504),
-        allowed_methods=frozenset(["GET", "POST"]),
-        raise_on_status=False,
-    )
-    adapter = HTTPAdapter(max_retries=retry)
-    session = requests.Session()
-    session.mount("https://", adapter)
-    session.mount("http://", adapter)
-    return session
-
-
-def _post_with_resilience(source_type, session, url, headers, **kwargs):
-    timeout_seconds = _get_source_timeout_seconds(source_type)
-    verify = _get_ssl_verify_setting(source_type)
-    try:
-        return session.post(
-            url,
-            headers=headers,
-            timeout=timeout_seconds,
-            verify=verify,
-            **kwargs,
-        )
-    except requests.exceptions.SSLError as exc:
-        logger.exception("SSL validation failed while calling UBR endpoint %s", url)
-        raise DataSource.Error(
-            f"SSL certificate verification failed while calling the '{source_type}' endpoint. "
-            "Configure its ca_bundle_path with the trusted CA chain "
-            "or (only for controlled environments) set verify_ssl to false."
-        ) from exc
-    except requests.exceptions.RequestException as exc:
-        logger.exception("HTTP request to UBR endpoint failed: %s", url)
-        raise DataSource.Error(f"Failed to call UBR endpoint '{url}': {exc}") from exc
 
 
 class UBRIndividualSource(StagedDataSource):
@@ -232,6 +117,7 @@ class UBRIndividualSource(StagedDataSource):
         config = MsrEtlConfig.get_source_config(self.source_type)
         return {
             **(config.get("headers") or {}),
+            **get_user_agent_header(self.source_type),
             **self.auth_provider.get_auth_header(),
         }
 
@@ -241,7 +127,7 @@ class UBRIndividualSource(StagedDataSource):
         url = _resolve_households_url(self.source_type)
         logger.info(f"Pulling households from {url}")
 
-        session = _create_retry_session(self.source_type)
+        session = create_retry_session(self.source_type)
 
         for rows, district_code, ta_code, chunk_lower, chunk_upper in (
             self._iter_fetched_percentile_chunks(
@@ -270,7 +156,7 @@ class UBRIndividualSource(StagedDataSource):
     def fetch(self):
         headers = self._get_headers()
         url = _resolve_households_url(self.source_type)
-        session = _create_retry_session(self.source_type)
+        session = create_retry_session(self.source_type)
 
         rows = []
         for chunk_rows, _, _, _, _ in self._iter_fetched_percentile_chunks(
@@ -298,7 +184,7 @@ class UBRIndividualSource(StagedDataSource):
     def fetch_unit(self, unit):
         headers = self._get_headers()
         url = _resolve_households_url(self.source_type)
-        session = _create_retry_session(self.source_type)
+        session = create_retry_session(self.source_type)
         return self.fetch_households(
             session, url, headers, unit["district"], unit["ta"],
             pmt_percentile_range=unit["percentile_range"],
@@ -405,7 +291,7 @@ class UBRIndividualSource(StagedDataSource):
         if self.max_age is not None:
             params["maxAge"] = str(self.max_age)
 
-        res = _post_with_resilience(
+        res = post_with_resilience(
             self.source_type,
             session,
             url,
@@ -697,6 +583,7 @@ class UBRLocationSource(StagedDataSource):
         config = MsrEtlConfig.get_source_config(self.source_type)
         return {
             **(config.get("headers") or {}),
+            **get_user_agent_header(self.source_type),
             **self.auth_provider.get_auth_header(),
         }
 
@@ -706,7 +593,7 @@ class UBRLocationSource(StagedDataSource):
         url = _resolve_geo_locations_url(self.source_type)
         logger.info(f"Pulling geo locations from {url}")
 
-        session = _create_retry_session(self.source_type)
+        session = create_retry_session(self.source_type)
 
         district_rows = self.fetch_geo_locations_from_api(
             session, url, headers, {"geo_location_type_id": 1}, "districts"
@@ -769,7 +656,7 @@ class UBRLocationSource(StagedDataSource):
 
         headers = self._get_headers()
         url = _resolve_geo_locations_url(self.source_type)
-        session = _create_retry_session(self.source_type)
+        session = create_retry_session(self.source_type)
         return self.fetch_geo_locations_from_api(
             session, url, headers, {"geo_location_type_id": 1}, "districts"
         )
@@ -819,7 +706,7 @@ class UBRLocationSource(StagedDataSource):
         ta/gvh/village scope set on this source."""
         headers = self._get_headers()
         url = _resolve_geo_locations_url(self.source_type)
-        session = _create_retry_session(self.source_type)
+        session = create_retry_session(self.source_type)
         geo_location_type_id = _LOCATION_UNIT_GEO_TYPE_ID[unit_type]
         rows = self.fetch_geo_locations_from_api(
             session, url, headers,
@@ -863,7 +750,7 @@ class UBRLocationSource(StagedDataSource):
         url = _resolve_geo_locations_url(self.source_type)
         logger.info(f"Pulling geo locations from {url}")
 
-        session = _create_retry_session(self.source_type)
+        session = create_retry_session(self.source_type)
 
         if village and not gvh:
             gvh = village[:7]
@@ -921,7 +808,7 @@ class UBRLocationSource(StagedDataSource):
     def fetch_geo_locations_from_api(self, session, url, headers, params, log_label):
         logger.info(f"Fetching {log_label} from {url} with params: {params}")
 
-        res = _post_with_resilience(self.source_type, session, url, headers, json=params)
+        res = post_with_resilience(self.source_type, session, url, headers, json=params)
 
         if not res.ok:
             logger.error("HTTP Request failed: %s %s", res.status_code, res.reason)
