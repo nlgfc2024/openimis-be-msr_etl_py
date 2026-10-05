@@ -103,7 +103,10 @@ class OpenimisHouseholdSource(StagedDataSource):
     def fetch_unit(self, unit):
         location_uuid = self._remote_location_uuid(unit["location_code"], unit["location_type"])
         if not location_uuid:
-            raise self.Error(f"Location {unit['location_type']} {unit['location_code']} not found on '{self.source_type}'")
+            raise self.Error(
+                f"Location {unit['location_type']} {unit['location_code']} not found on '{self.source_type}', "
+                "or not visible to its service user (assign it the TAs it may read)"
+            )
 
         rows = []
         after = None
@@ -188,7 +191,10 @@ class OpenimisHouseholdSource(StagedDataSource):
 
         body = response.json()
         if body.get("errors"):
-            raise self.Error(f"'{self.source_type}' GraphQL errors: " + "; ".join(str(e.get("message")) for e in body["errors"]))
+            messages = "; ".join(str(e.get("message")) for e in body["errors"])
+            if "csrftoken" in messages:
+                messages += " (the remote must list this source's user_agent in USER_AGENT_CSRF_BYPASS)"
+            raise self.Error(f"'{self.source_type}' GraphQL errors: {messages}")
         return body["data"]
 
     @staticmethod
