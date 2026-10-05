@@ -185,10 +185,16 @@ class OpenimisConnectorTestCase(SimpleTestCase):
         with self.assertRaisesRegex(OpenimisHouseholdSource.Error, "GraphQL errors"):
             self._source().fetch_unit(self._ta_unit())
 
+    def test_csrf_error_explains_the_bypass(self):
+        self.post.side_effect = [_response(errors=["'csrftoken'"])]
+
+        with self.assertRaisesRegex(OpenimisHouseholdSource.Error, "USER_AGENT_CSRF_BYPASS"):
+            self._source().fetch_unit(self._ta_unit())
+
     def test_unknown_remote_location_raises(self):
         self.post.side_effect = [_response({"locations": {"edges": []}})]
 
-        with self.assertRaisesRegex(OpenimisHouseholdSource.Error, "not found on 'pwp'"):
+        with self.assertRaisesRegex(OpenimisHouseholdSource.Error, "not found on 'pwp'.*assign it the TAs"):
             self._source().fetch_unit(self._ta_unit())
 
     def test_missing_base_url_raises(self):
