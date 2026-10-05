@@ -268,3 +268,64 @@ class OpenimisRegistryAndServiceTestCase(SimpleTestCase):
         self.assertEqual((service.source.district, service.source.ta), ("105", "10501"))
         self.assertIsInstance(service.adapter, OpenimisHouseholdAdapter)
         mock_auth.assert_called_once_with(source_type="pwp")
+
+
+class SourceFilterSupportTestCase(SimpleTestCase):
+
+    def setUp(self):
+        self._original_sources = MsrEtlConfig.sources
+        self.addCleanup(setattr, MsrEtlConfig, "sources", self._original_sources)
+        MsrEtlConfig.sources = {"pwp": {**PWP_CONFIG}}
+        patcher = patch("msr_etl.sources.openimis_source.get_auth_provider")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_filter_the_source_does_not_take_is_rejected_not_dropped(self):
+        from msr_etl.services import UBRIndividualService
+
+        with self.assertRaisesRegex(ValueError, "Source 'pwp' does not support filters: gender, min_age"):
+            UBRIndividualService(MagicMock(), source_type="pwp", district="105", gender="Female", minAge=18, sink=MagicMock())
+
+    def test_percentile_range_is_a_filter_only_when_sent(self):
+        from msr_etl.services import UBRIndividualService
+
+        UBRIndividualService(MagicMock(), source_type="pwp", district="105", sink=MagicMock())
+        with self.assertRaisesRegex(ValueError, "pmt_percentile_range"):
+            UBRIndividualService(MagicMock(), source_type="pwp", district="105", upper_percentile_category=20, sink=MagicMock())
+
+    @patch("msr_etl.sources.ubr_source.get_auth_provider")
+    def test_ubr_still_receives_every_filter(self, _auth):
+        from msr_etl.services import UBRIndividualService
+
+        service = UBRIndividualService(
+            MagicMock(), source_type="ubr", district="101", gender="Female", minAge=18,
+            lower_percentile_category=0, upper_percentile_category=20, sink=MagicMock(),
+        )
+
+        self.assertEqual((service.source.gender, service.source.min_age), ("Female", 18))
+        self.assertEqual(service.source.pmt_percentile_range, range(0, 21))
+
+    @patch("msr_etl.sources.ubr_source.get_auth_provider")
+    def test_ubr_default_percentile_range_still_applies(self, _auth):
+        from msr_etl.services import UBRIndividualService
+
+        service = UBRIndividualService(MagicMock(), source_type="ubr", district="101", sink=MagicMock())
+
+        self.assertEqual(service.source.pmt_percentile_range, range(0, 11))
+
+    @patch("msr_etl.gql_mutations.run_as_scheduled_job")
+    def test_schedule_mutation_reports_a_schema_field_the_source_ignores(self, mock_dispatch):
+        from msr_etl.gql_mutations import ScheduleMsrUbrIndividualsImportMutation
+
+        MsrEtlConfig.sources["pwp"]["filter_schema"] = {"individual": [
+            {"name": "location", "type": "location"}, {"name": "gender", "type": "select"},
+        ]}
+        user = MagicMock(id=1)
+        user.has_perms.return_value = True
+
+        result = ScheduleMsrUbrIndividualsImportMutation.async_mutate(
+            user, source_type="pwp", filters={"district": "105", "gender": "Female"},
+        )
+
+        self.assertIn("does not support filters: gender", result[0]["detail"])
+        mock_dispatch.assert_not_called()
