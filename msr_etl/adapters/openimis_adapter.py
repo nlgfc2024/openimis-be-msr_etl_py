@@ -12,6 +12,8 @@ _INDIVIDUAL_KEYS = (
     "traditional_authority_name", "traditional_authority_code",
 )
 _HOUSEHOLD_KEYS = ("household_mobile_number", "household_pmt_score", "household_wealth_quintile")
+# The individual import workflow reads the recipient designation from recipient_info.
+_RECIPIENT_INFO = {"PRIMARY": 1, "SECONDARY": 2}
 
 
 class OpenimisHouseholdAdapter(DataAdapter):
@@ -48,6 +50,7 @@ class OpenimisHouseholdAdapter(DataAdapter):
                 "location_code": location.get("code"),
                 # Primary recipients who aren't the head have no role on the remote membership.
                 "individual_role": (membership.get("role") or "").upper(),
+                "recipient_info": _RECIPIENT_INFO.get(membership.get("recipientType")),
                 **{key: individual_ext.get(key) for key in _INDIVIDUAL_KEYS},
                 **{key: household_ext.get(key) for key in _HOUSEHOLD_KEYS},
             })
