@@ -127,6 +127,15 @@ class OpenimisConnectorTestCase(SimpleTestCase):
         self.assertEqual(headers["User-Agent"], "msr-etl-connector")
         self.assertEqual(headers["Authorization"], "Bearer jwt")
 
+    def test_query_excludes_deleted_households_and_removed_members(self):
+        self.post.side_effect = [LOCATION_FOUND, _page([], False)]
+
+        self._source().fetch_unit(self._ta_unit())
+
+        query = self.post.call_args_list[1].kwargs["json"]["query"]
+        self.assertIn("isDeleted: false", query.split("groupindividuals")[0])
+        self.assertIn("groupindividuals(isDeleted: false)", query)
+
     def test_member_filters_drop_unverified_members(self):
         self.post.side_effect = [
             LOCATION_FOUND,
@@ -231,12 +240,18 @@ class OpenimisHouseholdAdapterTestCase(SimpleTestCase):
         self.assertEqual((row["first_name"], row["last_name"], row["dob"]), ("Ann", "Banda", "1990-01-01"))
         self.assertEqual((row["location_code"], row["location_name"]), ("105010104", "Chalunda2"))
         self.assertEqual(row["individual_role"], "SON")
+        self.assertIsNone(row["recipient_info"])
         self.assertEqual((row["ubr_id"], row["national_id"], row["gender"]), (1, "N1", "Female"))
         self.assertEqual(row["household_wealth_quintile"], "Poorest")
 
     def test_primary_recipient_without_role_gets_empty_role(self):
         (row,) = OpenimisHouseholdAdapter("pwp").transform([self._row(role=None, recipient="PRIMARY")])
         self.assertEqual(row["individual_role"], "")
+        self.assertEqual(row["recipient_info"], 1)
+
+    def test_secondary_recipient_maps_to_recipient_info_2(self):
+        (row,) = OpenimisHouseholdAdapter("pwp").transform([self._row(role="SPOUSE", recipient="SECONDARY")])
+        self.assertEqual(row["recipient_info"], 2)
 
     def test_skips_members_without_ubr_id(self):
         self.assertEqual(OpenimisHouseholdAdapter("pwp").transform([self._row(ubr_id=None)]), [])
