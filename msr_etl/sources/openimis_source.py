@@ -35,11 +35,11 @@ query($code: String!, $type: String!) {
 
 HOUSEHOLDS_QUERY = """
 query($first: Int!, $after: String, $location: String!, $level: Int!, $filters: [String]) {
-  group(first: $first, after: $after, parentLocation: $location, parentLocationLevel: $level, customFilters: $filters) {
+  group(first: $first, after: $after, parentLocation: $location, parentLocationLevel: $level, customFilters: $filters, isDeleted: false) {
     pageInfo { hasNextPage endCursor }
     edges { node {
       code jsonExt location { code name }
-      groupindividuals { edges { node {
+      groupindividuals(isDeleted: false) { edges { node {
         role recipientType jsonExt
         individual { uuid firstName lastName dob jsonExt location { code name } }
       } } }
