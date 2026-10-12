@@ -118,6 +118,53 @@ Each field is `{name, label, type, required?, options?, min?, max?, maxLevel?}`,
 
 For `CERTIFICATE_VERIFY_FAILED`, keep `verify_ssl` true and set `ca_bundle_path` to the CA chain used by the remote server. Set `verify_ssl` to false only in controlled environments.
 
+### Remote openIMIS source (`openimis_gql`)
+
+Imports verified households and their members from another openIMIS instance, e.g. Jobs-Now (rmep) pulling from the PWP CoreMIS. Individual imports only; locations still come from MSR.
+
+Each unit is one TA (or the single TA/GVH/village given). The connector looks up that location on the remote by code, pages its households 100 at a time (`group` with `parentLocation`, `parentLocationLevel` and `customFilters`), and imports one row per member, matched on `json_ext.ubr_id`.
+
+Source config on the importing instance:
+
+```json
+"pwp": {
+  "connector": "openimis_gql",
+  "display_name": "PWP CoreMIS",
+  "kind": "individual",
+  "base_url": "https://<pwp-host>/api/graphql",
+  "auth_type": "openimis_jwt",
+  "auth_basic_username": "<service user>",
+  "auth_basic_password": "<secret>",
+  "user_agent": "openimis-msr-etl-rmep",
+  "household_filters": ["validation_status__exact__string=\"VERIFIED\""],
+  "member_filters": {"validation_status": "VERIFIED"},
+  "page_size": 100,
+  "timeout_seconds": 120,
+  "retry_total": 3,
+  "verify_ssl": true,
+  "filter_schema": {"individual": [{"name": "location", "label": "Location", "type": "location", "required": true}]}
+}
+```
+
+| Key | Purpose |
+|---|---|
+| `household_filters` | openIMIS `customFilters` on the household's `json_ext`, as `field__lookup__type=value` (strings quoted). The default selects households verified by household validation |
+| `member_filters` | Exact matches on each member's `json_ext`; `{}` keeps every member of a selected household |
+| `page_size` | Households per request, capped at 100 (openIMIS `RELAY_CONNECTION_MAX_LIMIT`) |
+
+Members without `ubr_id` are skipped. Primary recipients who aren't the household head have no role on the remote membership and are imported with an empty `individual_role`.
+
+#### Remote (PWP) setup
+
+1. **Service user**: a dedicated interactive user with a role holding only group search (`180001`), individual search (`159001`) and location query (`121901`). No mutation rights.
+2. **Location access**: with `ROW_SECURITY` on, the user only sees households in locations assigned to it, and openIMIS assignments (`UserDistrict`) count only locations of type `D`, which is the TA level in the MSR hierarchy. Assign every TA the importing instance may read; a TA left out is reported as "not found ... or not visible to its service user".
+3. **CSRF bypass**: outside dev mode, openIMIS list queries require a session CSRF token. Set `USER_AGENT_CSRF_BYPASS` on the remote to the source's `user_agent`. The value is matched as a substring, so keep it specific (`openimis-msr-etl-rmep`, not e.g. `python-requests`). Without it, requests fail with a `'csrftoken'` error.
+4. **Network/TLS**: the importing instance must reach `base_url`; keep `verify_ssl` true (or set `ca_bundle_path`).
+
+On the importing instance, keep msr_etl's `ModuleConfiguration` row `is_exposed: false`: core's `moduleConfigurations` query returns exposed configurations without a permission check, and this one holds the service user's password.
+
+Logins use `tokenAuth`; the JWT is reused for the job, and an HTTP 401 or an expired/invalid-token error in the response body triggers one fresh login and retry.
+
 ## GraphQL API
 
 All fields are namespaced with `msr` to avoid conflicts with the generic `api_etl` module.
