@@ -1,8 +1,8 @@
 from typing import Dict, Final, Tuple, Type
 
-from msr_etl.adapters import DataAdapter, UBRIndividualAdapter, UBRLocationAdapter
+from msr_etl.adapters import DataAdapter, OpenimisHouseholdAdapter, UBRIndividualAdapter, UBRLocationAdapter
 from msr_etl.apps import MsrEtlConfig
-from msr_etl.sources import DataSource, UBRIndividualSource, UBRLocationSource
+from msr_etl.sources import DataSource, OpenimisHouseholdSource, UBRIndividualSource, UBRLocationSource
 
 ConnectorRegistry = Dict[str, Tuple[Type[DataSource], Type[DataAdapter]]]
 
@@ -11,6 +11,7 @@ DEFAULT_CONNECTOR: Final = "msr_api"
 
 INDIVIDUAL_CONNECTOR_REGISTRY: ConnectorRegistry = {
     "msr_api": (UBRIndividualSource, UBRIndividualAdapter),
+    "openimis_gql": (OpenimisHouseholdSource, OpenimisHouseholdAdapter),
 }
 
 LOCATION_CONNECTOR_REGISTRY: ConnectorRegistry = {
