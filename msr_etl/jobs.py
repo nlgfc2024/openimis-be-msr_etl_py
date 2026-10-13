@@ -20,13 +20,21 @@ def run_ubr_locations_import(reporter, **params):
 
 
 def _run_staged_import(reporter, source, kind):
+    # Progress is in records (individuals/locations), so the total is only
+    # known once everything is downloaded; a failed download has no count.
     units = source.enumerate_units()
-    reporter.set_total(2 * len(units))
+    reporter.message("Downloading data...")
+    total = 0
     for unit in units:
-        staged = stage_unit(reporter.job.id, source, unit, kind)
-        reporter.advance(**({"staged": 1} if staged else {"errors": 1}))
-        reporter.message(f"Staged {unit['unit_type']} {unit['unit_code']}")
+        record_count = stage_unit(reporter.job.id, source, unit, kind)
+        if record_count is None:
+            reporter.advance(k=0, download_errors=1)
+        else:
+            total += record_count
+            reporter.advance(k=0, staged=record_count)
 
+    reporter.set_total(total)
+    reporter.message("Importing data...")
     sync_staged_units(reporter.job.id, reporter=reporter, user=reporter.job.user)
     _finish(reporter)
 
@@ -38,7 +46,9 @@ def _finish(reporter):
         requeue_retryable_failed_units(reporter.job.id)
         sync_staged_units(reporter.job.id, reporter=reporter, user=reporter.job.user)
 
+    # The status chip says how it ended; a leftover "Importing data..." would contradict it
+    reporter.message(None)
     if job_has_failed_units(reporter.job.id):
-        reporter.partial(error="Some units failed; see msrEtlSyncUnits for details")
+        reporter.partial(error="Some records failed to download or import; see the sync log for details")
     else:
         reporter.succeed()
