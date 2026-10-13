@@ -44,7 +44,7 @@ class StageUnitListPayloadTestCase(TestCase):
 
         result = stage_unit(self.job_uuid, source, self.unit, INDIVIDUAL)
 
-        self.assertTrue(result)
+        self.assertEqual(result, 2)
         source.fetch_unit.assert_called_once_with(self.unit)
         sync_unit = MsrEtlSyncUnit.objects.get(job_uuid=self.job_uuid, unit_code="101:10101:0-9")
         self.assertEqual(sync_unit.stage_status, MsrEtlSyncUnit.Status.STAGED)
@@ -92,7 +92,7 @@ class StageUnitListPayloadTestCase(TestCase):
 
         result = stage_unit(self.job_uuid, source, self.unit, INDIVIDUAL)
 
-        self.assertFalse(result)
+        self.assertIsNone(result)
         sync_unit = MsrEtlSyncUnit.objects.get(job_uuid=self.job_uuid, unit_code="101:10101:0-9")
         self.assertEqual(sync_unit.stage_status, MsrEtlSyncUnit.Status.FAILED)
         self.assertIn("UBR API unavailable", sync_unit.error_detail)
@@ -111,7 +111,7 @@ class StageUnitDictPayloadTestCase(TestCase):
 
         result = stage_unit(self.job_uuid, source, self.unit, LOCATION)
 
-        self.assertTrue(result)
+        self.assertEqual(result, 1)
         source.record_identity.assert_not_called()
         sync_unit = MsrEtlSyncUnit.objects.get(job_uuid=self.job_uuid, unit_type=MsrEtlSyncUnit.UnitType.GVH)
         self.assertEqual(sync_unit.kind, LOCATION)
@@ -136,7 +136,7 @@ class StageUnitDictPayloadTestCase(TestCase):
 
         result = stage_unit(self.job_uuid, source, self.unit, LOCATION)
 
-        self.assertFalse(result)
+        self.assertIsNone(result)
         sync_unit = MsrEtlSyncUnit.objects.get(job_uuid=self.job_uuid, unit_type=MsrEtlSyncUnit.UnitType.GVH)
         self.assertEqual(sync_unit.stage_status, MsrEtlSyncUnit.Status.FAILED)
 
@@ -158,8 +158,9 @@ class SyncStagedUnitsTestCase(TestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
 
-    def _staged_unit(self, unit_type, unit_code, payload, kind=INDIVIDUAL, source_type="ubr"):
+    def _staged_unit(self, unit_type, unit_code, payload, kind=INDIVIDUAL, source_type="ubr", record_count=None):
         return MsrEtlSyncUnit.objects.create(
+            record_count=record_count,
             job_uuid=self.job_uuid,
             source_type=source_type,
             kind=kind,
@@ -172,7 +173,7 @@ class SyncStagedUnitsTestCase(TestCase):
     def test_syncs_unit_through_its_source_types_adapter(self):
         self.adapter_class.return_value.transform.return_value = [{"first_name": "A"}]
         unit = self._staged_unit(
-            MsrEtlSyncUnit.UnitType.PERCENTILE_CHUNK, "101:10101:0-9", [{"id": 1}], source_type="sctp",
+            MsrEtlSyncUnit.UnitType.PERCENTILE_CHUNK, "101:10101:0-9", [{"id": 1}], source_type="sctp", record_count=1,
         )
 
         sync_staged_units(self.job_uuid, reporter=self.reporter, user="the-user")
@@ -183,7 +184,15 @@ class SyncStagedUnitsTestCase(TestCase):
         self.adapter_class.assert_called_once_with(source_type="sctp")
         self.sink_class.assert_called_once_with("the-user")
         self.sink_class.return_value.push.assert_called_once()
-        self.reporter.advance.assert_called_once_with(synced=1)
+        self.reporter.advance.assert_called_once_with(k=1, synced=1)
+
+    def test_counts_records_the_adapter_drops_as_skipped(self):
+        self.adapter_class.return_value.transform.return_value = [{"first_name": "A"}]
+        self._staged_unit(MsrEtlSyncUnit.UnitType.PERCENTILE_CHUNK, "101:10101:0-9", [{"id": 1}], record_count=3)
+
+        sync_staged_units(self.job_uuid, reporter=self.reporter, user="the-user")
+
+        self.reporter.advance.assert_called_once_with(k=3, synced=1, skipped=2)
 
     def test_syncs_location_units_in_hierarchy_order(self):
         self.adapter_class.return_value.transform.side_effect = lambda payload: [payload["data_type"]]
@@ -213,7 +222,17 @@ class SyncStagedUnitsTestCase(TestCase):
         unit.refresh_from_db()
         self.assertEqual(unit.sync_status, MsrEtlSyncUnit.Status.FAILED)
         self.assertEqual(unit.attempts, 1)
-        self.reporter.advance.assert_called_once_with(errors=1)
+        self.reporter.advance.assert_called_once_with(k=0)
+
+    def test_counts_unit_as_failed_once_out_of_attempts(self):
+        self.adapter_class.return_value.transform.return_value = [{"first_name": "A"}]
+        self.sink_class.return_value.push.side_effect = RuntimeError("workflow failed")
+        self._staged_unit(MsrEtlSyncUnit.UnitType.PERCENTILE_CHUNK, "101:10101:0-9", [{"id": 1}], record_count=4)
+        MsrEtlSyncUnit.objects.filter(job_uuid=self.job_uuid).update(attempts=2)
+
+        sync_staged_units(self.job_uuid, reporter=self.reporter, user="the-user")
+
+        self.reporter.advance.assert_called_once_with(k=4, errors=4)
 
     def test_skips_units_not_pending(self):
         self._staged_unit(MsrEtlSyncUnit.UnitType.PERCENTILE_CHUNK, "101:10101:0-9", [])
