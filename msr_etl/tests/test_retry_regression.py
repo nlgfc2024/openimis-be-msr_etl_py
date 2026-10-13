@@ -25,7 +25,7 @@ def _make_unit(job_uuid):
         job_uuid=job_uuid, kind=MsrEtlSyncUnit.Kind.LOCATION,
         unit_type=MsrEtlSyncUnit.UnitType.GVH, unit_code="101",
         stage_status=MsrEtlSyncUnit.Status.STAGED, sync_status=MsrEtlSyncUnit.Status.PENDING,
-        raw_payload={"data_type": "G", "data": [{"geo_location_code": "1010101"}]},
+        raw_payload={"data_type": "G", "data": [{"geo_location_code": "1010101"}]}, record_count=1,
     )
 
 
@@ -59,6 +59,7 @@ class FailRetrySucceedRegressionTestCase(TestCase):
 
         reporter = ProgressReporter(job)
         reporter.set_total(1)
+        reporter.message("Importing data...")
         sync_staged_units(job.id, reporter=reporter, user=user)
 
         unit.refresh_from_db()
@@ -73,6 +74,7 @@ class FailRetrySucceedRegressionTestCase(TestCase):
         self.assertEqual(unit.attempts, 1)
         self.assertEqual(job.status, AsyncJob.Status.SUCCESS)
         self.assertIsNotNone(job.finished_at)
+        self.assertIsNone(job.message)
         self.assertEqual(mock_sink_class.return_value.push.call_count, 2)
 
     def test_sweeper_recovers_a_job_whose_worker_died_before_finish(self):
@@ -87,6 +89,7 @@ class FailRetrySucceedRegressionTestCase(TestCase):
 
         reporter = ProgressReporter(job)
         reporter.set_total(1)
+        reporter.message("Importing data...")
         sync_staged_units(job.id, reporter=reporter, user=user)
 
         unit.refresh_from_db()
@@ -101,3 +104,4 @@ class FailRetrySucceedRegressionTestCase(TestCase):
         self.assertEqual(unit.sync_status, MsrEtlSyncUnit.Status.SYNCED)
         self.assertEqual(job.status, AsyncJob.Status.SUCCESS)
         self.assertIsNotNone(job.finished_at)
+        self.assertIsNone(job.message)

@@ -191,7 +191,7 @@ class UBRIndividualSource(StagedDataSource):
         )
 
     def count_records(self, payload):
-        return len(payload)
+        return sum(len(row.get("household_members") or []) for row in payload)
 
     def record_identity(self, row):
         return self.get_household_identity(row)
@@ -677,12 +677,15 @@ class UBRLocationSource(StagedDataSource):
                 logger.warning("Skipping district %s because UBR returned no TAs", district_code)
                 continue
 
-            units.append({
-                "unit_type": MsrEtlSyncUnit.UnitType.DISTRICT,
-                "unit_code": district_code,
-                "district": district_code,
-                "payload": {"data_type": "D", "data": [row]},
-            })
+            # A scoped district is already in openIMIS, and its row here is a
+            # code-only placeholder the adapter would just skip
+            if not self.district:
+                units.append({
+                    "unit_type": MsrEtlSyncUnit.UnitType.DISTRICT,
+                    "unit_code": district_code,
+                    "district": district_code,
+                    "payload": {"data_type": "D", "data": [row]},
+                })
             units.append({
                 "unit_type": MsrEtlSyncUnit.UnitType.TA,
                 "unit_code": district_code,

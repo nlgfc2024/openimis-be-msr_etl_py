@@ -705,8 +705,9 @@ class UBRIndividualSourceStagingTestCase(SimpleTestCase):
         self.assertEqual(args[3:], ("101", "10101"))
         self.assertEqual(kwargs["pmt_percentile_range"], range(0, 10))
 
-    def test_count_records_counts_list_rows(self):
-        self.assertEqual(self.source.count_records([{"id": 1}, {"id": 2}]), 2)
+    def test_count_records_counts_household_members(self):
+        payload = [{"id": 1, "household_members": [{}, {}, {}]}, {"id": 2, "household_members": None}]
+        self.assertEqual(self.source.count_records(payload), 3)
 
     def test_record_identity_uses_household_identity(self):
         self.assertEqual(self.source.record_identity({"id": 7}), ("id", "7"))
@@ -741,6 +742,17 @@ class UBRLocationSourceStagingTestCase(SimpleTestCase):
         ta_unit = next(u for u in units if u["district"] == "101" and u["unit_type"] == MsrEtlSyncUnit.UnitType.TA)
         self.assertEqual(ta_unit["payload"], ta_payload)
         self.assertEqual(ta_unit["unit_code"], "101")
+
+    def test_enumerate_units_scoped_to_district_omits_district_unit(self):
+        source = UBRLocationSource(get_auth_provider("noauth"), district="330")
+        ta_payload = {"data_type": "T", "data": [{"geo_location_code": "33007"}]}
+        with patch.object(UBRLocationSource, "fetch_level", return_value=ta_payload):
+            units = source.enumerate_units()
+
+        self.assertEqual(
+            [u["unit_type"] for u in units],
+            [MsrEtlSyncUnit.UnitType.TA, MsrEtlSyncUnit.UnitType.GVH, MsrEtlSyncUnit.UnitType.VILLAGE],
+        )
 
     def test_enumerate_units_skips_district_row_missing_code(self):
         with patch.object(UBRLocationSource, "list_districts", return_value=[{"geo_location_name": "No code"}]), \
