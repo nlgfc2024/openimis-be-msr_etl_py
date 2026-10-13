@@ -95,10 +95,10 @@ def _close_completed_jobs():
             continue
         if has_retryable_failed_units(job.id):
             continue
-        fields = {"finished_at": timezone.now(), "updated_at": timezone.now()}
+        fields = {"finished_at": timezone.now(), "updated_at": timezone.now(), "message": None}
         if job_has_failed_units(job.id):
             fields["status"] = AsyncJob.Status.PARTIAL
-            fields["error"] = "Some units failed; see msrEtlSyncUnits for details"
+            fields["error"] = "Some records failed to download or import; see the sync log for details"
         else:
             fields["status"] = AsyncJob.Status.SUCCESS
         # Re-excluded here in case the job went terminal between the read above and this write.
