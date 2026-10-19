@@ -62,7 +62,8 @@ def _dedupe_rows(job_uuid, source, rows):
 
 def stage_unit(job_uuid, source, unit, kind):
     """Fetch one unit from a StagedDataSource and stage its payload. List
-    payloads are deduped via source.record_identity()."""
+    payloads are deduped via source.record_identity(). Returns the staged
+    record count, or None if the fetch failed."""
     sync_unit = MsrEtlSyncUnit.objects.create(
         job_uuid=job_uuid,
         source_type=source.source_type,
@@ -76,14 +77,15 @@ def stage_unit(job_uuid, source, unit, kind):
         if isinstance(payload, list):
             payload, fields["record_identities"] = _dedupe_rows(job_uuid, source, payload)
 
+        record_count = source.count_records(payload)
         MsrEtlSyncUnit.objects.filter(id=sync_unit.id).update(
             stage_status=MsrEtlSyncUnit.Status.STAGED,
             raw_payload=payload,
-            record_count=source.count_records(payload),
+            record_count=record_count,
             updated_at=timezone.now(),
             **fields,
         )
-        return True
+        return record_count
     except Exception as exc:
         logger.warning("Failed to stage %s unit %s: %s", unit["unit_type"], unit["unit_code"], exc)
         MsrEtlSyncUnit.objects.filter(id=sync_unit.id).update(
@@ -91,16 +93,18 @@ def stage_unit(job_uuid, source, unit, kind):
             error_detail=str(exc)[:2000],
             updated_at=timezone.now(),
         )
-        return False
+        return None
 
 
 def _sync_unit_payload(unit, user):
+    """Returns how many records were pushed; the adapter drops invalid ones."""
     if unit.raw_payload is None:
-        return
+        return 0
     _, adapter_cls = _RESOLVERS[unit.kind](unit.source_type)
     transformed = adapter_cls(source_type=unit.source_type).transform(unit.raw_payload)
     if transformed:
         _SINKS[unit.kind](user).push(transformed, f"job_{unit.job_uuid}_unit_{unit.id}")
+    return len(transformed or [])
 
 
 @transaction.atomic
@@ -114,13 +118,14 @@ def _sync_one_unit(unit_id, user):
     if unit is None:
         return None
 
+    records = unit.record_count or 0
     try:
-        _sync_unit_payload(unit, user)
+        imported = _sync_unit_payload(unit, user)
         MsrEtlSyncUnit.objects.filter(id=unit.id).update(
             sync_status=MsrEtlSyncUnit.Status.SYNCED,
             updated_at=timezone.now(),
         )
-        return True
+        return "synced", records, imported
     except Exception as exc:
         logger.warning("Failed to sync unit %s: %s", unit.unit_code, exc)
         MsrEtlSyncUnit.objects.filter(id=unit.id).update(
@@ -129,7 +134,8 @@ def _sync_one_unit(unit_id, user):
             attempts=unit.attempts + 1,
             updated_at=timezone.now(),
         )
-        return False
+        out_of_attempts = unit.attempts + 1 >= int(MsrEtlConfig.sync_unit_max_attempts)
+        return ("failed" if out_of_attempts else "retry"), records, 0
 
 
 def sync_staged_units(job_uuid, reporter=None, user=None):
@@ -155,10 +161,18 @@ def sync_staged_units(job_uuid, reporter=None, user=None):
     )
 
     for unit_id in pending_ids:
-        result = _sync_one_unit(unit_id, user)
-        if result is None or reporter is None:
+        outcome = _sync_one_unit(unit_id, user)
+        if outcome is None or reporter is None:
             continue
-        reporter.advance(**({"synced": 1} if result else {"errors": 1}))
+        # A unit's records count as processed once, when it is done: synced or out of retries
+        status, records, imported = outcome
+        if status == "synced":
+            skipped = records - imported
+            reporter.advance(k=records, synced=imported, **({"skipped": skipped} if skipped > 0 else {}))
+        elif status == "failed":
+            reporter.advance(k=records, errors=records)
+        else:
+            reporter.advance(k=0)
 
 
 def job_has_failed_units(job_uuid):

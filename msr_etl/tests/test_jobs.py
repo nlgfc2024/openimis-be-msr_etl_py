@@ -25,7 +25,7 @@ class RunUbrIndividualsImportTestCase(SimpleTestCase):
         ]
 
     @patch("msr_etl.jobs.sync_staged_units")
-    @patch("msr_etl.jobs.stage_unit", return_value=True)
+    @patch("msr_etl.jobs.stage_unit", return_value=3)
     @patch("msr_etl.jobs.UBRIndividualService")
     @patch("msr_etl.jobs.has_retryable_failed_units", return_value=False)
     @patch("msr_etl.jobs.job_has_failed_units", return_value=False)
@@ -37,7 +37,7 @@ class RunUbrIndividualsImportTestCase(SimpleTestCase):
         run_ubr_individuals_import(self.reporter, district="101", ta="10101")
 
         mock_service_class.assert_called_once_with("the-user", district="101", ta="10101")
-        self.reporter.set_total.assert_called_once_with(4)
+        self.reporter.set_total.assert_called_once_with(6)
         mock_stage.assert_any_call("job-uuid", source, self.units[0], MsrEtlSyncUnit.Kind.INDIVIDUAL)
         self.assertEqual(mock_stage.call_count, 2)
         mock_sync.assert_called_once_with("job-uuid", reporter=self.reporter, user="the-user")
@@ -45,7 +45,7 @@ class RunUbrIndividualsImportTestCase(SimpleTestCase):
         self.reporter.partial.assert_not_called()
 
     @patch("msr_etl.jobs.sync_staged_units")
-    @patch("msr_etl.jobs.stage_unit", return_value=False)
+    @patch("msr_etl.jobs.stage_unit", return_value=None)
     @patch("msr_etl.jobs.UBRIndividualService")
     @patch("msr_etl.jobs.has_retryable_failed_units", return_value=False)
     @patch("msr_etl.jobs.job_has_failed_units", return_value=True)
@@ -60,7 +60,7 @@ class RunUbrIndividualsImportTestCase(SimpleTestCase):
         self.reporter.succeed.assert_not_called()
 
     @patch("msr_etl.jobs.sync_staged_units")
-    @patch("msr_etl.jobs.stage_unit", return_value=False)
+    @patch("msr_etl.jobs.stage_unit", return_value=None)
     @patch("msr_etl.jobs.UBRIndividualService")
     @patch("msr_etl.jobs.requeue_retryable_failed_units")
     @patch("msr_etl.jobs.has_retryable_failed_units", side_effect=[True, False])
@@ -85,7 +85,7 @@ class RunUbrLocationsImportTestCase(SimpleTestCase):
         self.reporter.job.user = "the-user"
 
     @patch("msr_etl.jobs.sync_staged_units")
-    @patch("msr_etl.jobs.stage_unit", return_value=True)
+    @patch("msr_etl.jobs.stage_unit", return_value=3)
     @patch("msr_etl.jobs.UBRLocationService")
     @patch("msr_etl.jobs.has_retryable_failed_units", return_value=False)
     @patch("msr_etl.jobs.job_has_failed_units", return_value=False)
@@ -101,14 +101,14 @@ class RunUbrLocationsImportTestCase(SimpleTestCase):
         run_ubr_locations_import(self.reporter)
 
         mock_service_class.assert_called_once_with("the-user")
-        self.reporter.set_total.assert_called_once_with(4)
+        self.reporter.set_total.assert_called_once_with(6)
         mock_stage.assert_any_call("job-uuid", source, units[0], MsrEtlSyncUnit.Kind.LOCATION)
         self.assertEqual(mock_stage.call_count, 2)
         mock_sync.assert_called_once_with("job-uuid", reporter=self.reporter, user="the-user")
         self.reporter.succeed.assert_called_once()
 
     @patch("msr_etl.jobs.sync_staged_units")
-    @patch("msr_etl.jobs.stage_unit", return_value=True)
+    @patch("msr_etl.jobs.stage_unit", return_value=3)
     @patch("msr_etl.jobs.UBRLocationService")
     @patch("msr_etl.jobs.has_retryable_failed_units", return_value=False)
     @patch("msr_etl.jobs.job_has_failed_units", return_value=False)
@@ -120,5 +120,5 @@ class RunUbrLocationsImportTestCase(SimpleTestCase):
         run_ubr_locations_import(self.reporter, district="101", ta="10101", gvh="1010101")
 
         mock_service_class.assert_called_once_with("the-user", district="101", ta="10101", gvh="1010101")
-        self.reporter.set_total.assert_called_once_with(2)
+        self.reporter.set_total.assert_called_once_with(3)
         self.assertEqual(mock_stage.call_count, 1)
