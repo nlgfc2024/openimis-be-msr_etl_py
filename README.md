@@ -112,7 +112,24 @@ Each entry under `sources` is one `source_type`. Its `connector` picks the code 
 
 #### `filter_schema` fields
 
-Each field is `{name, label, type, required?, options?, min?, max?, maxLevel?}`, with `type` one of `location`, `select`, `multiselect`, `number`, `boolean` or `text`. A `location` field is sent as `district`/`ta`/`gvh`/`village`. The schedule mutations reject any `filters` key that is not in the source's schema for that import.
+Each field is `{name, label, type, required?, options?, min?, max?, maxLevel?, cols?}`, with `type` one of `location`, `select`, `multiselect`, `number`, `boolean` or `text`. A `location` field is sent as `district`/`ta`/`gvh`/`village`. The schedule mutations reject any `filters` key that is not in the source's schema for that import.
+
+A `location` field renders one drill-down picker per level (District → TA → GVH → Village); each lists only the children of the level above, and only District is required. `maxLevel` sets how many levels are shown (default: the location module's `Location.MaxLevels`, 4).
+
+`cols` controls the form layout (frontend only):
+
+| Field | `cols` means | Default |
+|---|---|---|
+| `location` | Level pickers per row; the field itself always takes a full row | All levels on one row |
+| Any other type | Fields of this size per row (`2` = half row, `3` = third, `4` = quarter) | `2` |
+
+Values that don't divide 12 round down to the nearest width that fits. On small screens every field takes a full row.
+
+For example, this lays the levels out as District/TA on one row and GVH/Village on the next:
+
+```json
+{"name": "location", "label": "Location", "type": "location", "required": true, "maxLevel": 4, "cols": 2}
+```
 
 #### TLS
 
@@ -430,6 +447,23 @@ GraphQL query / mutation
 For the preview workflow the pipeline is split across two round trips:
 - **Query** → `DataSource.fetch()` only (returns raw records to the frontend).
 - **Mutation** → `DataAdapter` + `DataSink` only (receives selected records from the frontend).
+
+### Import job progress
+
+Scheduled imports (`jobs.py`) download every unit into `MsrEtlSyncUnit` first, then sync them. Progress on the job (`AsyncJob`) is counted in records (individuals or locations), not units:
+
+- `total` is set once downloading finishes, to the number of records downloaded; until then it is empty. UBR individual pulls count household members.
+- `processed` advances by a unit's records once that unit is done: synced, or failed with no retries left.
+
+| Metric | Meaning |
+|---|---|
+| `staged` | Records downloaded |
+| `synced` | Records sent to openIMIS |
+| `skipped` | Records the adapter dropped as invalid (e.g. a member with no name or date of birth) |
+| `errors` | Records in units that failed after all retries |
+| `download_errors` | Units that failed to download (their record count is unknown) |
+
+`synced` + `skipped` + `errors` add up to `total`. The job's `message` shows the current phase and is cleared when the job closes.
 
 ### Key files
 
