@@ -40,7 +40,7 @@ Configuration is loaded from openIMIS `ModuleConfiguration` (module `msr_etl`, l
 
 | Key | Default | Purpose |
 |---|---|---|
-| `sink_model_lookup_field` | `json_ext__ubr_id` | Field used to match imported individuals to existing ones |
+| `sink_model_lookup_field` | `json_ext__ubr_id` | Field used to match imported individuals to existing ones of the same source (see [Keeping sources apart](#keeping-sources-apart)) |
 | `sink_update_existing` | `true` | Update matched individuals instead of skipping them |
 | `sink_import_username` | `""` | User the import workflow runs as; empty uses the user who started the import |
 | `gql_query_msr_etl_rule_perms` | `["953001"]` | Rights for msr_etl queries |
@@ -181,6 +181,24 @@ Members without `ubr_id` are skipped. Primary recipients who aren't the househol
 On the importing instance, keep msr_etl's `ModuleConfiguration` row `is_exposed: false`: core's `moduleConfigurations` query returns exposed configurations without a permission check, and this one holds the service user's password.
 
 Logins use `tokenAuth`; the JWT is reused for the job, and an HTTP 401 or an expired/invalid-token error in the response body triggers one fresh login and retry.
+
+### Keeping sources apart
+
+Each source's data stays its own, so an instance can host several programmes that each use one source (e.g. Jobs-Now: RMEP from `pwp`, UPG from `upg`) without them sharing people or households. On an instance with a single source nothing changes.
+
+- **Tag**: every imported individual gets `json_ext.source_type`, the source's key in `sources` (not its connector). Households copy it from their head.
+- **Matching**: an import only matches and updates existing individuals of its own source. Records without a tag predate it and belong to the default source, `ubr`.
+- **Households**: imports match households by code, so a non-default source's household codes are prefixed with the source (`pwp:30874398`); `ubr` keeps plain codes. The original number stays in `json_ext.form_number`.
+- **Locations** are shared by every source and are not tagged.
+
+Records imported from a non-default source before tagging existed have no tag, so they would count as `ubr`. Tag them once with:
+
+```bash
+python manage.py tag_source_records            # report what would change
+python manage.py tag_source_records --apply    # write it (--source pwp to limit, --username for the history)
+```
+
+The command finds a source's records through its import batches, and skips people also imported by another source, people already tagged with another source, and households with members from other sources.
 
 ## GraphQL API
 
