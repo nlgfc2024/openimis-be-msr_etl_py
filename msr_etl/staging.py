@@ -103,7 +103,8 @@ def _sync_unit_payload(unit, user):
     _, adapter_cls = _RESOLVERS[unit.kind](unit.source_type)
     transformed = adapter_cls(source_type=unit.source_type).transform(unit.raw_payload)
     if transformed:
-        _SINKS[unit.kind](user).push(transformed, f"job_{unit.job_uuid}_unit_{unit.id}")
+        sink = _SINKS[unit.kind](user, source_type=unit.source_type)
+        sink.push(transformed, f"job_{unit.job_uuid}_unit_{unit.id}")
     return len(transformed or [])
 
 

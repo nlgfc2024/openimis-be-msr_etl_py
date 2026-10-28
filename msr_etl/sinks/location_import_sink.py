@@ -9,7 +9,8 @@ logger = logging.getLogger(__name__)
 
 class LocationImportSink(DataSink):
 
-    def __init__(self, user: User):
+    def __init__(self, user: User, source_type: str = None):
+        # Locations are shared reference data (MSR codes on every instance), so not scoped by source
         super().__init__()
         self.user = user
 

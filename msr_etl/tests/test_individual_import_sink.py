@@ -1,6 +1,8 @@
 from django.test import TestCase
 from unittest.mock import MagicMock, patch
-from msr_etl.sinks.individual_import_sink import IndividualImportSink, IMPORT_NEW_INDIVIDUALS, UPDATE_EXISTING_INDIVIDUALS, WORKFLOW_GROUP
+from msr_etl.sinks.individual_import_sink import (
+    IndividualImportSink, IMPORT_NEW_INDIVIDUALS, UPDATE_EXISTING_INDIVIDUALS, WORKFLOW_GROUP, source_group_code,
+)
 from core.test_helpers import LogInHelper
 from individual.models import Individual, IndividualDataSourceUpload
 from django.core.files.uploadedfile import InMemoryUploadedFile
@@ -168,7 +170,7 @@ class TestIndividualImportSink(TestCase):
         self.assertIsInstance(new_import_file, InMemoryUploadedFile)
         new_import_file.file.seek(0)
         new_content = new_import_file.file.read().decode('utf-8')
-        expected_new_csv = 'external_id,name,age\r\n456,Jane Smith,25\r\n'
+        expected_new_csv = 'external_id,name,age,source_type\r\n456,Jane Smith,25,ubr\r\n'
         self.assertEqual(new_content, expected_new_csv)
 
         # Validate existing records update
@@ -176,7 +178,7 @@ class TestIndividualImportSink(TestCase):
         self.assertIsInstance(existing_update_file, InMemoryUploadedFile)
         existing_update_file.file.seek(0)
         existing_content = existing_update_file.file.read().decode('utf-8')
-        expected_existing_csv = f'external_id,name,age,ID\r\n123,John Doe,30,{self.individual.id}\r\n'
+        expected_existing_csv = f'external_id,name,age,source_type,ID\r\n123,John Doe,30,ubr,{self.individual.id}\r\n'
         self.assertEqual(existing_content, expected_existing_csv)
 
     @patch('msr_etl.sinks.individual_import_sink.IndividualDataSourceUpload.objects')
@@ -211,6 +213,7 @@ class TestIndividualImportSink(TestCase):
     @patch('msr_etl.sinks.individual_import_sink.WorkflowService.get_workflows')
     def test_push_data_skip_existing_when_update_disabled(self, mock_get_workflows, mock_import_individuals):
         mock_get_workflows.side_effect = mock_get_workflow
+        mock_import_individuals.return_value = {'imported': 1}
         MsrEtlConfig.sink_update_existing = False  # Disable updating existing records
 
         sink = IndividualImportSink(self.user)
@@ -227,8 +230,63 @@ class TestIndividualImportSink(TestCase):
         self.assertIsInstance(import_file, InMemoryUploadedFile)
         import_file.file.seek(0)
         content = import_file.file.read().decode('utf-8')
-        expected_csv = 'external_id,name,age\r\n456,Jane Smith,25\r\n'
+        expected_csv = 'external_id,name,age,source_type\r\n456,Jane Smith,25,ubr\r\n'
         self.assertEqual(content, expected_csv)
+
+    def _pushed_csvs(self, mock_import_individuals):
+        contents = []
+        for call in mock_import_individuals.call_args_list:
+            upload = call[0][0]
+            upload.file.seek(0)
+            contents.append(upload.file.read().decode('utf-8'))
+        return contents
+
+    @patch('msr_etl.sinks.individual_import_sink.IndividualImportService.import_individuals')
+    @patch('msr_etl.sinks.individual_import_sink.WorkflowService.get_workflows')
+    def test_push_matches_existing_records_only_within_its_source(self, mock_get_workflows, mock_import_individuals):
+        mock_get_workflows.side_effect = mock_get_workflow
+        mock_import_individuals.return_value = {'imported': 1}
+        pwp_individual = Individual(first_name='Ann', last_name='Banda', dob='1991-01-01',
+                                    json_ext={'external_id': 789, 'source_type': 'pwp'})
+        pwp_individual.save(username=self.user.username)
+
+        IndividualImportSink(self.user, source_type='pwp').push([{'external_id': 123}, {'external_id': 789}])
+
+        new_csv, update_csv = self._pushed_csvs(mock_import_individuals)
+        # 123 exists only untagged (the default source's), so PWP imports its own copy
+        self.assertEqual(new_csv, 'external_id,source_type\r\n123,pwp\r\n')
+        self.assertEqual(update_csv, f'external_id,source_type,ID\r\n789,pwp,{pwp_individual.id}\r\n')
+
+    @patch('msr_etl.sinks.individual_import_sink.IndividualImportService.import_individuals')
+    @patch('msr_etl.sinks.individual_import_sink.WorkflowService.get_workflows')
+    def test_default_source_owns_untagged_records_but_not_other_sources(self, mock_get_workflows, mock_import_individuals):
+        mock_get_workflows.side_effect = mock_get_workflow
+        mock_import_individuals.return_value = {'imported': 1}
+        Individual(first_name='Ann', last_name='Banda', dob='1991-01-01',
+                   json_ext={'external_id': 789, 'source_type': 'pwp'}).save(username=self.user.username)
+
+        IndividualImportSink(self.user).push([{'external_id': 123}, {'external_id': 789}])
+
+        new_csv, update_csv = self._pushed_csvs(mock_import_individuals)
+        self.assertEqual(new_csv, 'external_id,source_type\r\n789,ubr\r\n')
+        self.assertEqual(update_csv, f'external_id,source_type,ID\r\n123,ubr,{self.individual.id}\r\n')
+
+    @patch('msr_etl.sinks.individual_import_sink.IndividualImportService.import_individuals')
+    @patch('msr_etl.sinks.individual_import_sink.WorkflowService.get_workflows')
+    def test_non_default_source_gets_its_own_household_codes(self, mock_get_workflows, mock_import_individuals):
+        mock_get_workflows.side_effect = mock_get_workflow
+        mock_import_individuals.return_value = {'imported': 1}
+
+        IndividualImportSink(self.user, source_type='pwp').push([{'external_id': 456, 'group_code': '30874398'}])
+        IndividualImportSink(self.user).push([{'external_id': 457, 'group_code': '30874398'}])
+
+        pwp_csv, default_csv = self._pushed_csvs(mock_import_individuals)
+        self.assertIn('456,pwp:30874398,pwp', pwp_csv)
+        self.assertIn('457,30874398,ubr', default_csv)
+
+    def test_source_group_code_is_idempotent(self):
+        self.assertEqual(source_group_code('pwp', '30874398'), 'pwp:30874398')
+        self.assertEqual(source_group_code('pwp', 'pwp:30874398'), 'pwp:30874398')
 
 
 def mock_get_workflow(name, group):

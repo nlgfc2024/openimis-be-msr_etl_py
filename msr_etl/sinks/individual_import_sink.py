@@ -1,4 +1,7 @@
 import logging
+
+from django.db.models import Q
+
 from msr_etl.sinks import DataSink
 from msr_etl.utils import data_to_file
 from core.models import User
@@ -13,6 +16,12 @@ IMPORT_NEW_INDIVIDUALS = "Python Import Individuals"
 UPDATE_EXISTING_INDIVIDUALS = "Python Update Individuals"
 WORKFLOW_GROUP = "individual"
 GROUP_AGGREGATION_COLUMN = None
+
+# Each import's records are tagged with the source they came from and only ever
+# matched against records of that same source, so sources never share people or
+# households. Untagged records predate the tag and belong to the default source.
+SOURCE_TYPE_FIELD = "source_type"
+DEFAULT_SOURCE_TYPE = "ubr"
 
 
 def resolve_import_user(user: User):
@@ -43,15 +52,32 @@ def ensure_import_user_login_name(user: User):
     return user
 
 
+def source_type_filter(source_type: str, prefix: str = "") -> Q:
+    """Q matching records of source_type; the default source also owns untagged records."""
+    field = f"{prefix}json_ext__{SOURCE_TYPE_FIELD}"
+    tagged = Q(**{field: source_type})
+    if source_type == DEFAULT_SOURCE_TYPE:
+        return tagged | ~Q(**{f"{prefix}json_ext__has_key": SOURCE_TYPE_FIELD})
+    return tagged
+
+
+def source_group_code(source_type: str, group_code) -> str:
+    prefix = f"{source_type}:"
+    group_code = str(group_code)
+    return group_code if group_code.startswith(prefix) else f"{prefix}{group_code}"
+
+
 class IndividualImportSink(DataSink):
 
-    def __init__(self, user: User):
+    def __init__(self, user: User, source_type: str = None):
         super().__init__()
+        self.source_type = source_type or DEFAULT_SOURCE_TYPE
         self.service = IndividualImportService(resolve_import_user(user))
         self.import_new_workflow = self.get_workflow(IMPORT_NEW_INDIVIDUALS)
         self.update_existing_workflow = self.get_workflow(UPDATE_EXISTING_INDIVIDUALS)
 
     def push(self, data: list[dict], batch_identifier=None):
+        data = [self._scope_to_source(record) for record in data]
         existing_records, new_records = self._split_existing_and_new(data)
 
         if new_records:
@@ -117,9 +143,18 @@ class IndividualImportSink(DataSink):
 
         return existing_records, new_records
 
+    def _scope_to_source(self, record: dict) -> dict:
+        record = {**record, SOURCE_TYPE_FIELD: self.source_type}
+        # Households are matched by code on import; a non-default source gets its own
+        # codes so it never joins the default source's household with the same number
+        group_code = record.get("group_code")
+        if group_code and self.source_type != DEFAULT_SOURCE_TYPE:
+            record["group_code"] = source_group_code(self.source_type, group_code)
+        return record
+
     def _get_existing_individual_ids(self, data_ids: list, model_lookup_field: str) -> dict:
         filter_kwargs = {f"{model_lookup_field}__in": data_ids}
-        queryset = Individual.objects.filter(**filter_kwargs)
+        queryset = Individual.objects.filter(source_type_filter(self.source_type), **filter_kwargs)
 
         results = queryset.values_list(model_lookup_field, 'id')
         return dict(results) if results else {}
