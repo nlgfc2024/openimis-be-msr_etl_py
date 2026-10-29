@@ -378,12 +378,12 @@ class OpenimisHouseholdAdapterExtraFieldsTestCase(SimpleTestCase):
         self.assertNotIn("remote_only_note", row)
 
     def test_remote_fields_never_override_adapter_columns(self):
-        (row,) = self._transform([self._row(1, first_name="Remote", group_code="X", source_type="ubr")],
-                                 schema=json.dumps({"properties": {"first_name": {}, "group_code": {}, "source_type": {}}}))
+        (row,) = self._transform([self._row(1, first_name="Remote", group_code="X", data_source="ubr")],
+                                 schema=json.dumps({"properties": {"first_name": {}, "group_code": {}, "data_source": {}}}))
 
         self.assertEqual(row["first_name"], "Ann")
         self.assertEqual(row["group_code"], "H1")
-        self.assertNotIn("source_type", row)
+        self.assertNotIn("data_source", row)
 
     def test_every_row_gets_the_same_columns(self):
         rows = self._transform([self._row(1, business_type="Tailoring"), self._row(2)])

@@ -2,25 +2,21 @@ import json
 import logging
 from typing import Any, Iterable
 
+from individual.data_source import DATA_SOURCE_FIELD
 from msr_etl.adapters.base import DataAdapter
 
 logger = logging.getLogger(__name__)
 
-# json_ext keys copied from the remote individual, matching UBRIndividualAdapter's output.
 _INDIVIDUAL_KEYS = (
     "ubr_id", "national_id", "fit_for_work", "gender", "marital_status", "disability",
     "group_village_head_name", "group_village_head_code",
     "traditional_authority_name", "traditional_authority_code",
 )
-# Household keys stay a fixed list: a household's json_ext is copied from its head, so passing it
-# dynamically would overwrite each member's own fields with the head's.
 _HOUSEHOLD_KEYS = ("household_mobile_number", "household_pmt_score", "household_wealth_quintile")
-# Set by the adapter or the import itself, so never taken from the remote individual's json_ext.
 _RESERVED_KEYS = {
     "id", "ID", "group_code", "form_number", "first_name", "last_name", "dob", "location_name",
-    "location_code", "individual_role", "recipient_info", "source_type",
+    "location_code", "individual_role", "recipient_info", DATA_SOURCE_FIELD,
 }
-# The individual import workflow reads the recipient designation from recipient_info.
 _RECIPIENT_INFO = {"PRIMARY": 1, "SECONDARY": 2}
 
 
