@@ -1,10 +1,9 @@
 import logging
 
-from django.db.models import Q
-
 from msr_etl.sinks import DataSink
 from msr_etl.utils import data_to_file
 from core.models import User
+from individual.data_source import DATA_SOURCE_FIELD, DEFAULT_DATA_SOURCE, data_source_q
 from individual.models import Individual, IndividualDataSourceUpload
 from individual.services import IndividualImportService
 from workflow.services import WorkflowService
@@ -16,12 +15,6 @@ IMPORT_NEW_INDIVIDUALS = "Python Import Individuals"
 UPDATE_EXISTING_INDIVIDUALS = "Python Update Individuals"
 WORKFLOW_GROUP = "individual"
 GROUP_AGGREGATION_COLUMN = None
-
-# Each import's records are tagged with the source they came from and only ever
-# matched against records of that same source, so sources never share people or
-# households. Untagged records predate the tag and belong to the default source.
-SOURCE_TYPE_FIELD = "source_type"
-DEFAULT_SOURCE_TYPE = "ubr"
 
 
 def resolve_import_user(user: User):
@@ -52,20 +45,11 @@ def ensure_import_user_login_name(user: User):
     return user
 
 
-def source_type_filter(source_type: str, prefix: str = "") -> Q:
-    """Q matching records of source_type; the default source also owns untagged records."""
-    field = f"{prefix}json_ext__{SOURCE_TYPE_FIELD}"
-    tagged = Q(**{field: source_type})
-    if source_type == DEFAULT_SOURCE_TYPE:
-        return tagged | ~Q(**{f"{prefix}json_ext__has_key": SOURCE_TYPE_FIELD})
-    return tagged
-
-
 class IndividualImportSink(DataSink):
 
     def __init__(self, user: User, source_type: str = None):
         super().__init__()
-        self.source_type = source_type or DEFAULT_SOURCE_TYPE
+        self.source_type = source_type or DEFAULT_DATA_SOURCE
         self.service = IndividualImportService(resolve_import_user(user))
         self.import_new_workflow = self.get_workflow(IMPORT_NEW_INDIVIDUALS)
         self.update_existing_workflow = self.get_workflow(UPDATE_EXISTING_INDIVIDUALS)
@@ -139,11 +123,11 @@ class IndividualImportSink(DataSink):
 
     def _scope_to_source(self, record: dict) -> dict:
         # Households take the tag from their members on import (individual module), codes stay as sent
-        return {**record, SOURCE_TYPE_FIELD: self.source_type}
+        return {**record, DATA_SOURCE_FIELD: self.source_type}
 
     def _get_existing_individual_ids(self, data_ids: list, model_lookup_field: str) -> dict:
         filter_kwargs = {f"{model_lookup_field}__in": data_ids}
-        queryset = Individual.objects.filter(source_type_filter(self.source_type), **filter_kwargs)
+        queryset = Individual.objects.filter(data_source_q(self.source_type), **filter_kwargs)
 
         results = queryset.values_list(model_lookup_field, 'id')
         return dict(results) if results else {}
