@@ -169,6 +169,8 @@ Source config on the importing instance:
 | `member_filters` | Exact matches on each member's `json_ext`; `{}` keeps every member of a selected household |
 | `page_size` | Households per request, capped at 100 (openIMIS `RELAY_CONNECTION_MAX_LIMIT`) |
 
+Each member brings the fields above plus **any other field of the remote individual's `json_ext` that the local `individual_schema` declares**, so a new remote field (e.g. PWP's `business_type`) comes through once it is added to the importing instance's `individual_schema`, with no code change. Undeclared fields are skipped and logged, because the import rejects columns the schema doesn't declare. Household fields stay a fixed list: a household's `json_ext` is copied from its head.
+
 Members without `ubr_id` are skipped. Primary recipients who aren't the household head have no role on the remote membership and are imported with an empty `individual_role`.
 
 #### Remote (PWP) setup

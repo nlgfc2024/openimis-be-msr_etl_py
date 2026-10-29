@@ -12,6 +12,7 @@ from msr_etl.source_registry import (
     resolve_individual_source,
 )
 from msr_etl.sources import OpenimisHouseholdSource
+from msr_etl.utils import data_to_file
 
 PWP_CONFIG = {
     "connector": "openimis_gql",
@@ -344,3 +345,89 @@ class SourceFilterSupportTestCase(SimpleTestCase):
 
         self.assertIn("does not support filters: gender", result[0]["detail"])
         mock_dispatch.assert_not_called()
+
+
+class OpenimisHouseholdAdapterExtraFieldsTestCase(SimpleTestCase):
+    """Remote individual fields declared in the local individual_schema come through without code changes."""
+
+    SCHEMA = json.dumps({"properties": {
+        "business_experience": {"type": "integer"}, "business_type": {"type": "string"},
+        "business_capital": {"type": "number"}, "ubr_id": {"type": "string"},
+    }})
+
+    def _row(self, ubr_id, **extra):
+        return {
+            "household": {"code": "H1", "jsonExt": {"form_number": "F1", "first_name": "Head"}, "location": {}},
+            "membership": {"role": "son", "recipientType": None, "jsonExt": {}},
+            "individual": {"uuid": f"ind-{ubr_id}", "firstName": "Ann", "lastName": "Banda", "dob": "1990-01-01",
+                           "jsonExt": {"ubr_id": ubr_id, **extra}, "location": {}},
+        }
+
+    def _transform(self, rows, schema=SCHEMA):
+        with patch("individual.apps.IndividualConfig.individual_schema", schema):
+            return OpenimisHouseholdAdapter("pwp").transform(rows)
+
+    def test_passes_fields_declared_in_the_local_schema(self):
+        (row,) = self._transform([self._row(1, business_type="Tailoring", business_capital=50000, business_experience=3)])
+
+        self.assertEqual((row["business_type"], row["business_capital"], row["business_experience"]), ("Tailoring", 50000, 3))
+
+    def test_skips_fields_the_local_schema_does_not_declare(self):
+        (row,) = self._transform([self._row(1, business_type="Tailoring", remote_only_note="x")])
+
+        self.assertNotIn("remote_only_note", row)
+
+    def test_remote_fields_never_override_adapter_columns(self):
+        (row,) = self._transform([self._row(1, first_name="Remote", group_code="X", data_source="ubr")],
+                                 schema=json.dumps({"properties": {"first_name": {}, "group_code": {}, "data_source": {}}}))
+
+        self.assertEqual(row["first_name"], "Ann")
+        self.assertEqual(row["group_code"], "H1")
+        self.assertNotIn("data_source", row)
+
+    def test_every_row_gets_the_same_columns(self):
+        rows = self._transform([self._row(1, business_type="Tailoring"), self._row(2)])
+
+        self.assertEqual(rows[0].keys(), rows[1].keys())
+        self.assertIsNone(rows[1]["business_type"])
+        data_to_file(rows, "batch")  # the sink's CSV writer takes its columns from the first row
+
+    def test_no_schema_passes_only_the_fixed_fields(self):
+        (row,) = self._transform([self._row(1, business_type="Tailoring")], schema=None)
+
+        self.assertNotIn("business_type", row)
+        self.assertEqual(row["ubr_id"], 1)
+
+    def test_skips_fields_declared_as_arrays_or_objects_and_drops_structured_values(self):
+        schema = json.dumps({"properties": {
+            "business_assets": {"type": "array"}, "business_owner": {"type": "object"}, "business_type": {"type": "string"},
+        }})
+        (row,) = self._transform([self._row(1, business_assets=["sewing machine"], business_owner={"name": "A"},
+                                            business_type=["not", "a", "string"])], schema=schema)
+
+        self.assertNotIn("business_assets", row)
+        self.assertNotIn("business_owner", row)
+        self.assertIsNone(row["business_type"])
+
+    def _stored_by_import(self, rows):
+        """What the individual import stores per row, after the sink's CSV file and the import loader."""
+        from individual.services import IndividualImportService
+
+        with patch("individual.apps.IndividualConfig.individual_schema", self.SCHEMA):
+            dataframe = IndividualImportService(None)._load_import_file(data_to_file(rows, "batch"))
+        return [json.loads(dataframe.iloc[index].to_json()) for index in range(len(dataframe.index))]
+
+    def test_declared_values_survive_the_import_file(self):
+        rows = self._transform([
+            self._row("30874398", business_type="001", business_capital=50000.5, business_experience=3),
+            self._row("30874399"),
+            self._row("30874400", business_type="NA"),
+        ])
+
+        first, second, third = self._stored_by_import(rows)
+
+        self.assertEqual(first["business_type"], "001")
+        self.assertEqual(first["ubr_id"], "30874398")
+        self.assertEqual((first["business_capital"], first["business_experience"]), (50000.5, 3))
+        self.assertIsNone(second["business_type"])
+        self.assertEqual(third["business_type"], "NA")  # a code, not a missing value
