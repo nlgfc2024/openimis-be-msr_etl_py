@@ -170,7 +170,7 @@ class TestIndividualImportSink(TestCase):
         self.assertIsInstance(new_import_file, InMemoryUploadedFile)
         new_import_file.file.seek(0)
         new_content = new_import_file.file.read().decode('utf-8')
-        expected_new_csv = 'external_id,name,age,source_type\r\n456,Jane Smith,25,ubr\r\n'
+        expected_new_csv = 'external_id,name,age,data_source\r\n456,Jane Smith,25,ubr\r\n'
         self.assertEqual(new_content, expected_new_csv)
 
         # Validate existing records update
@@ -178,7 +178,7 @@ class TestIndividualImportSink(TestCase):
         self.assertIsInstance(existing_update_file, InMemoryUploadedFile)
         existing_update_file.file.seek(0)
         existing_content = existing_update_file.file.read().decode('utf-8')
-        expected_existing_csv = f'external_id,name,age,source_type,ID\r\n123,John Doe,30,ubr,{self.individual.id}\r\n'
+        expected_existing_csv = f'external_id,name,age,data_source,ID\r\n123,John Doe,30,ubr,{self.individual.id}\r\n'
         self.assertEqual(existing_content, expected_existing_csv)
 
     @patch('msr_etl.sinks.individual_import_sink.IndividualDataSourceUpload.objects')
@@ -230,7 +230,7 @@ class TestIndividualImportSink(TestCase):
         self.assertIsInstance(import_file, InMemoryUploadedFile)
         import_file.file.seek(0)
         content = import_file.file.read().decode('utf-8')
-        expected_csv = 'external_id,name,age,source_type\r\n456,Jane Smith,25,ubr\r\n'
+        expected_csv = 'external_id,name,age,data_source\r\n456,Jane Smith,25,ubr\r\n'
         self.assertEqual(content, expected_csv)
 
     def _pushed_csvs(self, mock_import_individuals):
@@ -247,15 +247,15 @@ class TestIndividualImportSink(TestCase):
         mock_get_workflows.side_effect = mock_get_workflow
         mock_import_individuals.return_value = {'imported': 1}
         pwp_individual = Individual(first_name='Ann', last_name='Banda', dob='1991-01-01',
-                                    json_ext={'external_id': 789, 'source_type': 'pwp'})
+                                    json_ext={'external_id': 789, 'data_source': 'pwp'})
         pwp_individual.save(username=self.user.username)
 
         IndividualImportSink(self.user, source_type='pwp').push([{'external_id': 123}, {'external_id': 789}])
 
         new_csv, update_csv = self._pushed_csvs(mock_import_individuals)
         # 123 exists only untagged (the default source's), so PWP imports its own copy
-        self.assertEqual(new_csv, 'external_id,source_type\r\n123,pwp\r\n')
-        self.assertEqual(update_csv, f'external_id,source_type,ID\r\n789,pwp,{pwp_individual.id}\r\n')
+        self.assertEqual(new_csv, 'external_id,data_source\r\n123,pwp\r\n')
+        self.assertEqual(update_csv, f'external_id,data_source,ID\r\n789,pwp,{pwp_individual.id}\r\n')
 
     @patch('msr_etl.sinks.individual_import_sink.IndividualImportService.import_individuals')
     @patch('msr_etl.sinks.individual_import_sink.WorkflowService.get_workflows')
@@ -263,13 +263,13 @@ class TestIndividualImportSink(TestCase):
         mock_get_workflows.side_effect = mock_get_workflow
         mock_import_individuals.return_value = {'imported': 1}
         Individual(first_name='Ann', last_name='Banda', dob='1991-01-01',
-                   json_ext={'external_id': 789, 'source_type': 'pwp'}).save(username=self.user.username)
+                   json_ext={'external_id': 789, 'data_source': 'pwp'}).save(username=self.user.username)
 
         IndividualImportSink(self.user).push([{'external_id': 123}, {'external_id': 789}])
 
         new_csv, update_csv = self._pushed_csvs(mock_import_individuals)
-        self.assertEqual(new_csv, 'external_id,source_type\r\n789,ubr\r\n')
-        self.assertEqual(update_csv, f'external_id,source_type,ID\r\n123,ubr,{self.individual.id}\r\n')
+        self.assertEqual(new_csv, 'external_id,data_source\r\n789,ubr\r\n')
+        self.assertEqual(update_csv, f'external_id,data_source,ID\r\n123,ubr,{self.individual.id}\r\n')
 
     @patch('msr_etl.sinks.individual_import_sink.IndividualImportService.import_individuals')
     @patch('msr_etl.sinks.individual_import_sink.WorkflowService.get_workflows')

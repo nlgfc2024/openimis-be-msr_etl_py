@@ -186,9 +186,9 @@ Logins use `tokenAuth`; the JWT is reused for the job, and an HTTP 401 or an exp
 
 Each source's data stays its own, so an instance can host several programmes that each use one source (e.g. Jobs-Now: RMEP from `pwp`, UPG from `sctp`) without them sharing people or households. On an instance with a single source nothing changes.
 
-- **Tag**: every imported individual gets `json_ext.source_type`, the source's key in `sources` (not its connector).
+- **Tag**: every imported individual gets `json_ext.data_source`, the source's key in `sources` (not its connector). A benefit plan names the source it takes people from with the same key, `json_ext.data_source` (see the individual module's `data_source.py`).
 - **Matching**: an import only matches and updates existing individuals of its own source. Records without a tag (e.g. created by hand) belong to the default source, `ubr`.
-- **Households** get the same `json_ext.source_type` from their members on import, and keep it when their head changes (it is never copied from the head). Codes stay as sent (e.g. the form number); an import only matches existing households of its own source.
+- **Households** get the same `json_ext.data_source` from their members on import, and keep it when their head changes (it is never copied from the head). Codes stay as sent (e.g. the form number); an import only matches existing households of its own source.
 - **Locations** are shared by every source and are not tagged.
 
 ## GraphQL API
