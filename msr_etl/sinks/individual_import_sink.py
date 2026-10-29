@@ -1,7 +1,9 @@
 import logging
+
 from msr_etl.sinks import DataSink
 from msr_etl.utils import data_to_file
 from core.models import User
+from individual.data_source import DATA_SOURCE_FIELD, DEFAULT_DATA_SOURCE, data_source_q
 from individual.models import Individual, IndividualDataSourceUpload
 from individual.services import IndividualImportService
 from workflow.services import WorkflowService
@@ -45,13 +47,15 @@ def ensure_import_user_login_name(user: User):
 
 class IndividualImportSink(DataSink):
 
-    def __init__(self, user: User):
+    def __init__(self, user: User, source_type: str = None):
         super().__init__()
+        self.source_type = source_type or DEFAULT_DATA_SOURCE
         self.service = IndividualImportService(resolve_import_user(user))
         self.import_new_workflow = self.get_workflow(IMPORT_NEW_INDIVIDUALS)
         self.update_existing_workflow = self.get_workflow(UPDATE_EXISTING_INDIVIDUALS)
 
     def push(self, data: list[dict], batch_identifier=None):
+        data = [self._scope_to_source(record) for record in data]
         existing_records, new_records = self._split_existing_and_new(data)
 
         if new_records:
@@ -117,9 +121,13 @@ class IndividualImportSink(DataSink):
 
         return existing_records, new_records
 
+    def _scope_to_source(self, record: dict) -> dict:
+        # Households take the tag from their members on import (individual module), codes stay as sent
+        return {**record, DATA_SOURCE_FIELD: self.source_type}
+
     def _get_existing_individual_ids(self, data_ids: list, model_lookup_field: str) -> dict:
         filter_kwargs = {f"{model_lookup_field}__in": data_ids}
-        queryset = Individual.objects.filter(**filter_kwargs)
+        queryset = Individual.objects.filter(data_source_q(self.source_type), **filter_kwargs)
 
         results = queryset.values_list(model_lookup_field, 'id')
         return dict(results) if results else {}

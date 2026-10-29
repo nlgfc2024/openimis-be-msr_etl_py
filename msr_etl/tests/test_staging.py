@@ -182,7 +182,7 @@ class SyncStagedUnitsTestCase(TestCase):
         self.assertEqual(unit.sync_status, MsrEtlSyncUnit.Status.SYNCED)
         self.resolver.assert_called_once_with("sctp")
         self.adapter_class.assert_called_once_with(source_type="sctp")
-        self.sink_class.assert_called_once_with("the-user")
+        self.sink_class.assert_called_once_with("the-user", source_type="sctp")
         self.sink_class.return_value.push.assert_called_once()
         self.reporter.advance.assert_called_once_with(k=1, synced=1)
 

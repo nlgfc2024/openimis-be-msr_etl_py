@@ -40,7 +40,7 @@ Configuration is loaded from openIMIS `ModuleConfiguration` (module `msr_etl`, l
 
 | Key | Default | Purpose |
 |---|---|---|
-| `sink_model_lookup_field` | `json_ext__ubr_id` | Field used to match imported individuals to existing ones |
+| `sink_model_lookup_field` | `json_ext__ubr_id` | Field used to match imported individuals to existing ones of the same source (see [Keeping sources apart](#keeping-sources-apart)) |
 | `sink_update_existing` | `true` | Update matched individuals instead of skipping them |
 | `sink_import_username` | `""` | User the import workflow runs as; empty uses the user who started the import |
 | `gql_query_msr_etl_rule_perms` | `["953001"]` | Rights for msr_etl queries |
@@ -181,6 +181,15 @@ Members without `ubr_id` are skipped. Primary recipients who aren't the househol
 On the importing instance, keep msr_etl's `ModuleConfiguration` row `is_exposed: false`: core's `moduleConfigurations` query returns exposed configurations without a permission check, and this one holds the service user's password.
 
 Logins use `tokenAuth`; the JWT is reused for the job, and an HTTP 401 or an expired/invalid-token error in the response body triggers one fresh login and retry.
+
+### Keeping sources apart
+
+Each source's data stays its own, so an instance can host several programmes that each use one source (e.g. Jobs-Now: RMEP from `pwp`, UPG from `sctp`) without them sharing people or households. On an instance with a single source nothing changes.
+
+- **Tag**: every imported individual gets `json_ext.data_source`, the source's key in `sources` (not its connector). A benefit plan names the source it takes people from with the same key, `json_ext.data_source` (see the individual module's `data_source.py`).
+- **Matching**: an import only matches and updates existing individuals of its own source. Records without a tag (e.g. created by hand) belong to the default source, `ubr`.
+- **Households** get the same `json_ext.data_source` from their members on import, and keep it when their head changes (it is never copied from the head). Codes stay as sent (e.g. the form number); an import only matches existing households of its own source.
+- **Locations** are shared by every source and are not tagged.
 
 ## GraphQL API
 

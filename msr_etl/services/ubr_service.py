@@ -87,7 +87,7 @@ class UBRIndividualService(MsrETLService):
                 },
             ),
             adapter=adapter or adapter_cls(source_type=resolved_source_type),
-            sink=sink or IndividualImportSink(user)
+            sink=sink or IndividualImportSink(user, source_type=resolved_source_type)
         )
 
 
