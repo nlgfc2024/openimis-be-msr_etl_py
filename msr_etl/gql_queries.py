@@ -12,7 +12,9 @@ class MsrEtlServicesListGQLType(graphene.ObjectType):
 
 class MsrEtlSourceTypeGQLType(graphene.ObjectType):
     value = graphene.String()
+    # label names the programme (display_name); source_name the system the data comes from, for messages
     label = graphene.String()
+    source_name = graphene.String()
     filter_schema = GenericScalar()
 
 

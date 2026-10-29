@@ -89,7 +89,8 @@ Each entry under `sources` is one `source_type`. Its `connector` picks the code 
 | Key | Purpose |
 |---|---|
 | `connector` | Registered connector for this source. `ubr` falls back to `msr_api` when unset |
-| `display_name` | Label shown in the frontend's source dropdown |
+| `display_name` | Name of the programme the source feeds, shown in the frontend's Programme picker and the benefit plan form (e.g. `Rural Micro Enterprise Program (RMEP)`) |
+| `source_name` | Name of the system the data comes from, shown in import messages ("downloaded from Public Works Program (PWP)"); defaults to `display_name` |
 | `kind` | `individual`, `location` or `both` (default): which imports offer this source |
 | `base_url` | API base URL. For `msr_api`, empty falls back to `https://malawiubr.org/api/v2` |
 | `households_endpoint_path`, `geo_locations_endpoint_path` | Endpoint paths appended to `base_url` |
@@ -194,7 +195,8 @@ Imports whole households listed by `form_number` in an uploaded file, each fetch
 ```json
 "sctp": {
   "connector": "msr_form_numbers",
-  "display_name": "UPG (SCTP)",
+  "display_name": "Ultra-Poor Graduation (UPG)",
+  "source_name": "Social Cash Transfer Program (SCTP)",
   "kind": "individual",
   "...": "MSR connection settings, as for ubr",
   "form_number_column": "form_number",
