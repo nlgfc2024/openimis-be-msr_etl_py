@@ -18,7 +18,16 @@ _EXCEL_FLOAT = re.compile(r"^(\d+)\.0+$")
 
 
 class FormNumberFileError(ValueError):
-    pass
+    def __init__(self, message, rejected_rows=None, rejected_count=0):
+        super().__init__(message)
+        self.rejected_rows = rejected_rows or []
+        self.rejected_count = rejected_count
+
+
+def _as_form_number(raw):
+    """The form number in a cell, or None if it isn't one."""
+    value = _EXCEL_FLOAT.sub(r"\1", str(raw).strip())
+    return value if value.isdigit() else None
 
 
 def _normalise_header(header):
@@ -53,18 +62,20 @@ def read_form_numbers(upload_file, column=DEFAULT_FORM_NUMBER_COLUMN):
         raise FormNumberFileError(f"Could not read the file: {exc}") from exc
 
     header = _pick_column(df, column)
+    values, first_row = df[header].tolist(), 2  # a header line, then rows counted from 1
+    # A one-column file without a header: pandas took its first form number as the header
+    if _as_form_number(header):
+        values, first_row = [header] + values, 1
     form_numbers, seen, rejected = [], set(), []
     rejected_count = duplicate_count = 0
-    for index, raw in enumerate(df[header].tolist()):
-        value = str(raw).strip()
-        if not value:
+    for index, raw in enumerate(values):
+        if not str(raw).strip():
             continue
-        value = _EXCEL_FLOAT.sub(r"\1", value)
-        if not value.isdigit():
+        value = _as_form_number(raw)
+        if not value:
             rejected_count += 1
             if len(rejected) < MAX_REPORTED_REJECTIONS:
-                # +2: a header line, and rows counted from 1
-                rejected.append({"row": index + 2, "value": str(raw), "reason": "not a number"})
+                rejected.append({"row": index + first_row, "value": str(raw), "reason": "not a number"})
             continue
         if value in seen:
             duplicate_count += 1
@@ -73,11 +84,11 @@ def read_form_numbers(upload_file, column=DEFAULT_FORM_NUMBER_COLUMN):
         form_numbers.append(value)
 
     if not form_numbers:
-        raise FormNumberFileError("The file has no usable form numbers")
+        raise FormNumberFileError("The file has no usable form numbers", rejected, rejected_count)
     return {
         "form_numbers": form_numbers,
         "rejected_rows": rejected,
         "rejected_count": rejected_count,
         "duplicate_count": duplicate_count,
-        "row_count": len(df.index),
+        "row_count": len(values),
     }

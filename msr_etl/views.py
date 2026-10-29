@@ -21,7 +21,8 @@ class CanRunImports(IsAuthenticated):
 
     def has_permission(self, request, view):
         rights = MsrEtlConfig.gql_mutation_execute_msr_etl_rule_perms or []
-        return super().has_permission(request, view) and request.user.has_perms(rights)
+        # has_perms([]) is True, so no configured right means no access
+        return bool(rights) and super().has_permission(request, view) and request.user.has_perms(rights)
 
 
 @api_view(["POST"])
@@ -41,7 +42,9 @@ def upload_form_numbers(request):
     try:
         result = read_form_numbers(upload_file, config.get("form_number_column") or DEFAULT_FORM_NUMBER_COLUMN)
     except FormNumberFileError as exc:
-        return Response({"success": False, "error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"success": False, "error": str(exc), "rejected": exc.rejected_count,
+                         "rejected_rows": exc.rejected_rows[:_RESPONSE_REJECTED_ROWS]},
+                        status=status.HTTP_400_BAD_REQUEST)
 
     upload = MsrEtlUpload.objects.create(
         source_type=source_type,

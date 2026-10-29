@@ -45,6 +45,14 @@ class ReadFormNumbersTestCase(SimpleTestCase):
     def test_a_single_column_file_is_used_whatever_its_header(self):
         self.assertEqual(read_form_numbers(_csv("HH\n30874398\n"))["form_numbers"], ["30874398"])
 
+    def test_keeps_the_first_form_number_of_a_headerless_file(self):
+        csv = read_form_numbers(_csv("30874398\nABC\n30874399\n"))
+        excel = read_form_numbers(_xlsx(pd.DataFrame({30874398: [30874399]})))
+
+        self.assertEqual(csv["form_numbers"], ["30874398", "30874399"])
+        self.assertEqual((csv["row_count"], csv["rejected_rows"][0]["row"]), (3, 2))
+        self.assertEqual(excel["form_numbers"], ["30874398", "30874399"])
+
     def test_skips_blanks_keeps_duplicates_once_and_rejects_non_numbers(self):
         result = read_form_numbers(_csv("form_number\n30874398\n\n30874398\nABC1\n30874399\n"))
 
@@ -58,8 +66,9 @@ class ReadFormNumbersTestCase(SimpleTestCase):
             read_form_numbers(_csv("a,b\n1,2\n"))
 
     def test_rejects_files_without_usable_form_numbers_or_of_other_types(self):
-        with self.assertRaisesRegex(FormNumberFileError, "no usable form numbers"):
+        with self.assertRaisesRegex(FormNumberFileError, "no usable form numbers") as raised:
             read_form_numbers(_csv("form_number\nABC\n"))
+        self.assertEqual(raised.exception.rejected_rows, [{"row": 2, "value": "ABC", "reason": "not a number"}])
         with self.assertRaisesRegex(FormNumberFileError, "Unsupported file type"):
             read_form_numbers(_csv("form_number\n1\n", name="sctp.txt"))
 
@@ -158,6 +167,20 @@ class UploadFormNumbersViewTestCase(TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("No 'form_number' column", response.data["error"])
+
+    def test_lists_the_rejected_rows_when_none_are_usable(self):
+        response = self._post({"source_type": "sctp", "file": _csv("form_number\nX1\nY2\n")}, self.user)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["rejected"], 2)
+        self.assertEqual([row["row"] for row in response.data["rejected_rows"]], [2, 3])
+
+    def test_denies_everyone_when_no_import_right_is_configured(self):
+        with patch.object(MsrEtlConfig, "gql_mutation_execute_msr_etl_rule_perms", []):
+            response = self._post({"source_type": "sctp", "file": _csv("form_number\n101\n")}, self.user)
+
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(MsrEtlUpload.objects.exists())
 
     def test_requires_authentication(self):
         response = self._post({"source_type": "sctp", "file": _csv("form_number\n101\n")})
