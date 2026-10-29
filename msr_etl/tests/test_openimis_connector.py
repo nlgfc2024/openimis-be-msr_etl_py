@@ -12,6 +12,7 @@ from msr_etl.source_registry import (
     resolve_individual_source,
 )
 from msr_etl.sources import OpenimisHouseholdSource
+from msr_etl.utils import data_to_file
 
 PWP_CONFIG = {
     "connector": "openimis_gql",
@@ -344,3 +345,55 @@ class SourceFilterSupportTestCase(SimpleTestCase):
 
         self.assertIn("does not support filters: gender", result[0]["detail"])
         mock_dispatch.assert_not_called()
+
+
+class OpenimisHouseholdAdapterExtraFieldsTestCase(SimpleTestCase):
+    """Remote individual fields declared in the local individual_schema come through without code changes."""
+
+    SCHEMA = json.dumps({"properties": {
+        "business_experience": {"type": "integer"}, "business_type": {"type": "string"},
+        "business_capital": {"type": "number"}, "ubr_id": {"type": "string"},
+    }})
+
+    def _row(self, ubr_id, **extra):
+        return {
+            "household": {"code": "H1", "jsonExt": {"form_number": "F1", "first_name": "Head"}, "location": {}},
+            "membership": {"role": "son", "recipientType": None, "jsonExt": {}},
+            "individual": {"uuid": f"ind-{ubr_id}", "firstName": "Ann", "lastName": "Banda", "dob": "1990-01-01",
+                           "jsonExt": {"ubr_id": ubr_id, **extra}, "location": {}},
+        }
+
+    def _transform(self, rows, schema=SCHEMA):
+        with patch("individual.apps.IndividualConfig.individual_schema", schema):
+            return OpenimisHouseholdAdapter("pwp").transform(rows)
+
+    def test_passes_fields_declared_in_the_local_schema(self):
+        (row,) = self._transform([self._row(1, business_type="Tailoring", business_capital=50000, business_experience=3)])
+
+        self.assertEqual((row["business_type"], row["business_capital"], row["business_experience"]), ("Tailoring", 50000, 3))
+
+    def test_skips_fields_the_local_schema_does_not_declare(self):
+        (row,) = self._transform([self._row(1, business_type="Tailoring", remote_only_note="x")])
+
+        self.assertNotIn("remote_only_note", row)
+
+    def test_remote_fields_never_override_adapter_columns(self):
+        (row,) = self._transform([self._row(1, first_name="Remote", group_code="X", source_type="ubr")],
+                                 schema=json.dumps({"properties": {"first_name": {}, "group_code": {}, "source_type": {}}}))
+
+        self.assertEqual(row["first_name"], "Ann")
+        self.assertEqual(row["group_code"], "H1")
+        self.assertNotIn("source_type", row)
+
+    def test_every_row_gets_the_same_columns(self):
+        rows = self._transform([self._row(1, business_type="Tailoring"), self._row(2)])
+
+        self.assertEqual(rows[0].keys(), rows[1].keys())
+        self.assertIsNone(rows[1]["business_type"])
+        data_to_file(rows, "batch")  # the sink's CSV writer takes its columns from the first row
+
+    def test_no_schema_passes_only_the_fixed_fields(self):
+        (row,) = self._transform([self._row(1, business_type="Tailoring")], schema=None)
+
+        self.assertNotIn("business_type", row)
+        self.assertEqual(row["ubr_id"], 1)
