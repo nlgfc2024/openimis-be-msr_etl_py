@@ -397,3 +397,35 @@ class OpenimisHouseholdAdapterExtraFieldsTestCase(SimpleTestCase):
 
         self.assertNotIn("business_type", row)
         self.assertEqual(row["ubr_id"], 1)
+
+    def test_skips_fields_declared_as_arrays_or_objects_and_drops_structured_values(self):
+        schema = json.dumps({"properties": {
+            "business_assets": {"type": "array"}, "business_owner": {"type": "object"}, "business_type": {"type": "string"},
+        }})
+        (row,) = self._transform([self._row(1, business_assets=["sewing machine"], business_owner={"name": "A"},
+                                            business_type=["not", "a", "string"])], schema=schema)
+
+        self.assertNotIn("business_assets", row)
+        self.assertNotIn("business_owner", row)
+        self.assertIsNone(row["business_type"])
+
+    def _stored_by_import(self, rows):
+        """What the individual import stores per row, after the sink's CSV file and the import loader."""
+        from individual.services import IndividualImportService
+
+        with patch("individual.apps.IndividualConfig.individual_schema", self.SCHEMA):
+            dataframe = IndividualImportService(None)._load_import_file(data_to_file(rows, "batch"))
+        return [json.loads(dataframe.iloc[index].to_json()) for index in range(len(dataframe.index))]
+
+    def test_declared_values_survive_the_import_file(self):
+        rows = self._transform([
+            self._row("30874398", business_type="001", business_capital=50000.5, business_experience=3),
+            self._row("30874399"),
+        ])
+
+        first, second = self._stored_by_import(rows)
+
+        self.assertEqual(first["business_type"], "001")
+        self.assertEqual(first["ubr_id"], "30874398")
+        self.assertEqual((first["business_capital"], first["business_experience"]), (50000.5, 3))
+        self.assertIsNone(second["business_type"])

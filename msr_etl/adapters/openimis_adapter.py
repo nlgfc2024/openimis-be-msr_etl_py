@@ -58,7 +58,7 @@ class OpenimisHouseholdAdapter(DataAdapter):
                 "individual_role": (membership.get("role") or "").upper(),
                 "recipient_info": _RECIPIENT_INFO.get(membership.get("recipientType")),
                 **{key: individual_ext.get(key) for key in _INDIVIDUAL_KEYS},
-                **{key: individual_ext.get(key) for key in extra_keys},
+                **{key: self._file_value(individual, key, individual_ext.get(key)) for key in extra_keys},
                 **{key: household_ext.get(key) for key in _HOUSEHOLD_KEYS},
             })
         return result
@@ -73,13 +73,28 @@ class OpenimisHouseholdAdapter(DataAdapter):
             if key not in _RESERVED_KEYS and key not in _INDIVIDUAL_KEYS and key not in _HOUSEHOLD_KEYS
         }
         declared = _declared_individual_fields()
-        skipped = sorted(remote_keys - declared)
+        skipped = sorted(remote_keys - set(declared))
         if skipped:
             logger.info("Not importing remote individual fields missing from individual_schema: %s", skipped)
-        return sorted(remote_keys & declared)
+        # The import goes through a CSV file, which can't carry lists or objects
+        structured = sorted(key for key in remote_keys if declared.get(key) in _STRUCTURED_TYPES)
+        if structured:
+            logger.warning("Not importing remote individual fields declared as arrays or objects: %s", structured)
+        return sorted(key for key in remote_keys & set(declared) if key not in structured)
+
+    @staticmethod
+    def _file_value(individual, key, value):
+        if isinstance(value, (list, dict)):
+            logger.warning("Dropping %s of member %s: a list or object can't be imported", key, individual.get("uuid"))
+            return None
+        return value
+
+
+_STRUCTURED_TYPES = ("array", "object")
 
 
 def _declared_individual_fields():
+    """individual_schema's fields and their declared types."""
     from individual.apps import IndividualConfig
 
     schema = IndividualConfig.individual_schema or {}
@@ -88,4 +103,7 @@ def _declared_individual_fields():
             schema = json.loads(schema)
         except ValueError:
             schema = {}
-    return set((schema.get("properties") or {}).keys())
+    return {
+        name: field.get("type") if isinstance(field, dict) else None
+        for name, field in (schema.get("properties") or {}).items()
+    }
