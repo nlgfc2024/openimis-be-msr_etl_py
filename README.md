@@ -184,21 +184,12 @@ Logins use `tokenAuth`; the JWT is reused for the job, and an HTTP 401 or an exp
 
 ### Keeping sources apart
 
-Each source's data stays its own, so an instance can host several programmes that each use one source (e.g. Jobs-Now: RMEP from `pwp`, UPG from `upg`) without them sharing people or households. On an instance with a single source nothing changes.
+Each source's data stays its own, so an instance can host several programmes that each use one source (e.g. Jobs-Now: RMEP from `pwp`, UPG from `sctp`) without them sharing people or households. On an instance with a single source nothing changes.
 
 - **Tag**: every imported individual gets `json_ext.source_type`, the source's key in `sources` (not its connector).
-- **Matching**: an import only matches and updates existing individuals of its own source. Records without a tag predate it and belong to the default source, `ubr`.
+- **Matching**: an import only matches and updates existing individuals of its own source. Records without a tag (e.g. created by hand) belong to the default source, `ubr`.
 - **Households**: a household's source is its code. Imports match households by code, so a non-default source's codes are prefixed with the source (`pwp:30874398`) and `ubr` keeps plain codes; the original number stays in `json_ext.form_number`. The code is used rather than a `json_ext` tag because a household's `json_ext` is copied from its head, so a household without a head (e.g. a head filtered out by `member_filters`) would lose it.
 - **Locations** are shared by every source and are not tagged.
-
-Records imported from a non-default source before tagging existed have no tag, so they would count as `ubr`. Tag them once with:
-
-```bash
-python manage.py tag_source_records            # report what would change
-python manage.py tag_source_records --apply    # write it (--source pwp to limit, --username for the history)
-```
-
-The command finds a source's records through its import batches, and skips people also imported by another source, people already tagged with another source, and households with members from other sources.
 
 ## GraphQL API
 
