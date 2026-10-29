@@ -421,11 +421,13 @@ class OpenimisHouseholdAdapterExtraFieldsTestCase(SimpleTestCase):
         rows = self._transform([
             self._row("30874398", business_type="001", business_capital=50000.5, business_experience=3),
             self._row("30874399"),
+            self._row("30874400", business_type="NA"),
         ])
 
-        first, second = self._stored_by_import(rows)
+        first, second, third = self._stored_by_import(rows)
 
         self.assertEqual(first["business_type"], "001")
         self.assertEqual(first["ubr_id"], "30874398")
         self.assertEqual((first["business_capital"], first["business_experience"]), (50000.5, 3))
         self.assertIsNone(second["business_type"])
+        self.assertEqual(third["business_type"], "NA")  # a code, not a missing value
