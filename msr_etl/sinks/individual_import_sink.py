@@ -61,12 +61,6 @@ def source_type_filter(source_type: str, prefix: str = "") -> Q:
     return tagged
 
 
-def source_group_code(source_type: str, group_code) -> str:
-    prefix = f"{source_type}:"
-    group_code = str(group_code)
-    return group_code if group_code.startswith(prefix) else f"{prefix}{group_code}"
-
-
 class IndividualImportSink(DataSink):
 
     def __init__(self, user: User, source_type: str = None):
@@ -144,13 +138,8 @@ class IndividualImportSink(DataSink):
         return existing_records, new_records
 
     def _scope_to_source(self, record: dict) -> dict:
-        record = {**record, SOURCE_TYPE_FIELD: self.source_type}
-        # Households are matched by code on import; a non-default source gets its own
-        # codes so it never joins the default source's household with the same number
-        group_code = record.get("group_code")
-        if group_code and self.source_type != DEFAULT_SOURCE_TYPE:
-            record["group_code"] = source_group_code(self.source_type, group_code)
-        return record
+        # Households take the tag from their members on import (individual module), codes stay as sent
+        return {**record, SOURCE_TYPE_FIELD: self.source_type}
 
     def _get_existing_individual_ids(self, data_ids: list, model_lookup_field: str) -> dict:
         filter_kwargs = {f"{model_lookup_field}__in": data_ids}

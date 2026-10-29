@@ -1,7 +1,7 @@
 from django.test import TestCase
 from unittest.mock import MagicMock, patch
 from msr_etl.sinks.individual_import_sink import (
-    IndividualImportSink, IMPORT_NEW_INDIVIDUALS, UPDATE_EXISTING_INDIVIDUALS, WORKFLOW_GROUP, source_group_code,
+    IndividualImportSink, IMPORT_NEW_INDIVIDUALS, UPDATE_EXISTING_INDIVIDUALS, WORKFLOW_GROUP,
 )
 from core.test_helpers import LogInHelper
 from individual.models import Individual, IndividualDataSourceUpload
@@ -273,20 +273,14 @@ class TestIndividualImportSink(TestCase):
 
     @patch('msr_etl.sinks.individual_import_sink.IndividualImportService.import_individuals')
     @patch('msr_etl.sinks.individual_import_sink.WorkflowService.get_workflows')
-    def test_non_default_source_gets_its_own_household_codes(self, mock_get_workflows, mock_import_individuals):
+    def test_household_codes_are_sent_unchanged(self, mock_get_workflows, mock_import_individuals):
         mock_get_workflows.side_effect = mock_get_workflow
         mock_import_individuals.return_value = {'imported': 1}
 
-        IndividualImportSink(self.user, source_type='pwp').push([{'external_id': 456, 'group_code': '30874398'}])
-        IndividualImportSink(self.user).push([{'external_id': 457, 'group_code': '30874398'}])
+        IndividualImportSink(self.user, source_type='sctp').push([{'external_id': 456, 'group_code': '47407473'}])
 
-        pwp_csv, default_csv = self._pushed_csvs(mock_import_individuals)
-        self.assertIn('456,pwp:30874398,pwp', pwp_csv)
-        self.assertIn('457,30874398,ubr', default_csv)
-
-    def test_source_group_code_is_idempotent(self):
-        self.assertEqual(source_group_code('pwp', '30874398'), 'pwp:30874398')
-        self.assertEqual(source_group_code('pwp', 'pwp:30874398'), 'pwp:30874398')
+        (sctp_csv,) = self._pushed_csvs(mock_import_individuals)
+        self.assertIn('456,47407473,sctp', sctp_csv)
 
 
 def mock_get_workflow(name, group):
