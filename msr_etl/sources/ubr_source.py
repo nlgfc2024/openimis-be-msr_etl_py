@@ -291,6 +291,11 @@ class UBRIndividualSource(StagedDataSource):
         if self.max_age is not None:
             params["maxAge"] = str(self.max_age)
 
+        rows = self._post_households(session, url, headers, params)
+        return self._apply_local_filters(rows)
+
+    def _post_households(self, session, url, headers, params):
+        """One get_households_data request; returns its targeting_data rows."""
         res = post_with_resilience(
             self.source_type,
             session,
@@ -316,8 +321,7 @@ class UBRIndividualSource(StagedDataSource):
             logger.error(f"Error in response: {body.get('error_message')}")
             raise self.Error(f"Error in response: {body.get('error_message')}")
 
-        rows = body.get("targeting_data", [])
-        return self._apply_local_filters(rows)
+        return body.get("targeting_data", [])
 
     def _iter_percentile_chunks(self):
         chunk_size = _get_percentile_chunk_size(self.source_type)

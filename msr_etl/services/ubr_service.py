@@ -44,10 +44,12 @@ class UBRIndividualService(MsrETLService):
                  labour_constrained: bool = None,
                  excluded_programme_codes: list = None,
                  household_head_gender: int = None,
+                 upload_id: str = None,
                  source: DataSource = None,
                  adapter: DataAdapter = None,
                  sink: DataSink = None):
-        if not district:
+        # Area pulls need a district (without one MSR is queried everywhere); file imports name households
+        if not district and not upload_id:
             raise ValueError("district is required for UBR household imports")
         if village and not gvh:
             raise ValueError("gvh is required when village is provided")
@@ -84,6 +86,7 @@ class UBRIndividualService(MsrETLService):
                     "labour_constrained": labour_constrained,
                     "excluded_programme_codes": excluded_programme_codes,
                     "household_head_gender": household_head_gender,
+                    "upload_id": upload_id,
                 },
             ),
             adapter=adapter or adapter_cls(source_type=resolved_source_type),

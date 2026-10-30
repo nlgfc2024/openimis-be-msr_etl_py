@@ -89,7 +89,8 @@ Each entry under `sources` is one `source_type`. Its `connector` picks the code 
 | Key | Purpose |
 |---|---|
 | `connector` | Registered connector for this source. `ubr` falls back to `msr_api` when unset |
-| `display_name` | Label shown in the frontend's source dropdown |
+| `display_name` | Name of the programme the source feeds, shown in the frontend's Programme picker and the benefit plan form (e.g. `Rural Micro Enterprise Program (RMEP)`) |
+| `source_name` | Name of the system the data comes from, shown in import messages ("downloaded from Public Works Program (PWP)"); defaults to `display_name` |
 | `kind` | `individual`, `location` or `both` (default): which imports offer this source |
 | `base_url` | API base URL. For `msr_api`, empty falls back to `https://malawiubr.org/api/v2` |
 | `households_endpoint_path`, `geo_locations_endpoint_path` | Endpoint paths appended to `base_url` |
@@ -183,6 +184,33 @@ Members without `ubr_id` are skipped. Primary recipients who aren't the househol
 On the importing instance, keep msr_etl's `ModuleConfiguration` row `is_exposed: false`: core's `moduleConfigurations` query returns exposed configurations without a permission check, and this one holds the service user's password.
 
 Logins use `tokenAuth`; the JWT is reused for the job, and an HTTP 401 or an expired/invalid-token error in the response body triggers one fresh login and retry.
+
+### MSR households from a file of form numbers (`msr_form_numbers`)
+
+Imports whole households listed by `form_number` in an uploaded file, each fetched from MSR's `get_households_data`, e.g. Jobs-Now's UPG from SCTP's export. The file is only a list of households; their data comes from MSR and goes through the same adapter as area pulls.
+
+1. **Upload**: `POST /api/msr_etl/form_number_upload/` (multipart: `file`, `source_type`; import rights) reads the form-number column of an `.xlsx`, `.xls` or `.csv`, and stores the list as an `MsrEtlUpload`. The column is found by name ignoring case and spaces, or a single-column file is used as is. Blank rows are ignored, repeats kept once, and non-numbers rejected with their row. The response gives the `upload_id` and those counts.
+2. **Import**: the Individuals import with `filters: {"upload_id": ...}`. Units are batches of form numbers; MSR answers one household per request and only with the percentile range set, so each is requested with `lower_percentile_category=0`, `upper_percentile_category=100`. Form numbers MSR doesn't know are logged.
+
+```json
+"sctp": {
+  "connector": "msr_form_numbers",
+  "display_name": "Ultra-Poor Graduation (UPG)",
+  "source_name": "Social Cash Transfer Program (SCTP)",
+  "kind": "individual",
+  "...": "MSR connection settings, as for ubr",
+  "form_number_column": "form_number",
+  "form_numbers_per_unit": 50,
+  "form_number_delay_seconds": 0.2,
+  "filter_schema": {"individual": [{"name": "upload_id", "label": "SCTP household file", "type": "file", "required": true}]}
+}
+```
+
+| Key | Purpose |
+|---|---|
+| `form_number_column` | Column holding the form numbers (default `form_number`) |
+| `form_numbers_per_unit` | Households per staged unit (default 50) |
+| `form_number_delay_seconds` | Pause between MSR requests (default none) |
 
 ### Keeping sources apart
 

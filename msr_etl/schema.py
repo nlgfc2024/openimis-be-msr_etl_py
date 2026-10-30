@@ -34,6 +34,7 @@ def _source_type_options(source_types, kind):
         return MsrEtlSourceTypeGQLType(
             value=source_type,
             label=config.get("display_name") or None,
+            source_name=config.get("source_name") or config.get("display_name") or None,
             filter_schema=(config.get("filter_schema") or {}).get(kind) or [],
         )
 
