@@ -2,7 +2,9 @@ from typing import Dict, Final, Tuple, Type
 
 from msr_etl.adapters import DataAdapter, OpenimisHouseholdAdapter, UBRIndividualAdapter, UBRLocationAdapter
 from msr_etl.apps import MsrEtlConfig
-from msr_etl.sources import DataSource, OpenimisHouseholdSource, UBRIndividualSource, UBRLocationSource
+from msr_etl.sources import (
+    DataSource, MsrFormNumberSource, OpenimisHouseholdSource, UBRIndividualSource, UBRLocationSource,
+)
 
 ConnectorRegistry = Dict[str, Tuple[Type[DataSource], Type[DataAdapter]]]
 
@@ -12,6 +14,8 @@ DEFAULT_CONNECTOR: Final = "msr_api"
 INDIVIDUAL_CONNECTOR_REGISTRY: ConnectorRegistry = {
     "msr_api": (UBRIndividualSource, UBRIndividualAdapter),
     "openimis_gql": (OpenimisHouseholdSource, OpenimisHouseholdAdapter),
+    # Households listed by form number in an uploaded file (e.g. UPG's SCTP export), fetched from MSR
+    "msr_form_numbers": (MsrFormNumberSource, UBRIndividualAdapter),
 }
 
 LOCATION_CONNECTOR_REGISTRY: ConnectorRegistry = {

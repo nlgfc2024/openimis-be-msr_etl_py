@@ -1,18 +1,22 @@
+import json
 import logging
 from typing import Any, Iterable
 
+from individual.data_source import DATA_SOURCE_FIELD
 from msr_etl.adapters.base import DataAdapter
 
 logger = logging.getLogger(__name__)
 
-# json_ext keys copied from the remote individual, matching UBRIndividualAdapter's output.
 _INDIVIDUAL_KEYS = (
     "ubr_id", "national_id", "fit_for_work", "gender", "marital_status", "disability",
     "group_village_head_name", "group_village_head_code",
     "traditional_authority_name", "traditional_authority_code",
 )
 _HOUSEHOLD_KEYS = ("household_mobile_number", "household_pmt_score", "household_wealth_quintile")
-# The individual import workflow reads the recipient designation from recipient_info.
+_RESERVED_KEYS = {
+    "id", "ID", "group_code", "form_number", "first_name", "last_name", "dob", "location_name",
+    "location_code", "individual_role", "recipient_info", DATA_SOURCE_FIELD,
+}
 _RECIPIENT_INFO = {"PRIMARY": 1, "SECONDARY": 2}
 
 
@@ -26,6 +30,8 @@ class OpenimisHouseholdAdapter(DataAdapter):
         if data is None:
             raise self.Error("Invalid input, expect input not to be None")
 
+        data = list(data)
+        extra_keys = self._extra_individual_keys(data)
         result = []
         for row in data:
             individual = row.get("individual") or {}
@@ -52,6 +58,52 @@ class OpenimisHouseholdAdapter(DataAdapter):
                 "individual_role": (membership.get("role") or "").upper(),
                 "recipient_info": _RECIPIENT_INFO.get(membership.get("recipientType")),
                 **{key: individual_ext.get(key) for key in _INDIVIDUAL_KEYS},
+                **{key: self._file_value(individual, key, individual_ext.get(key)) for key in extra_keys},
                 **{key: household_ext.get(key) for key in _HOUSEHOLD_KEYS},
             })
         return result
+
+    @staticmethod
+    def _extra_individual_keys(data):
+        """Remote individual fields beyond the fixed ones that the local individual_schema declares, so
+        new remote fields come through once declared there (the import rejects undeclared columns).
+        Collected over the batch: every row needs the same columns for the import file."""
+        remote_keys = {
+            key for row in data for key in ((row.get("individual") or {}).get("jsonExt") or {})
+            if key not in _RESERVED_KEYS and key not in _INDIVIDUAL_KEYS and key not in _HOUSEHOLD_KEYS
+        }
+        declared = _declared_individual_fields()
+        skipped = sorted(remote_keys - set(declared))
+        if skipped:
+            logger.info("Not importing remote individual fields missing from individual_schema: %s", skipped)
+        # The import goes through a CSV file, which can't carry lists or objects
+        structured = sorted(key for key in remote_keys if declared.get(key) in _STRUCTURED_TYPES)
+        if structured:
+            logger.warning("Not importing remote individual fields declared as arrays or objects: %s", structured)
+        return sorted(key for key in remote_keys & set(declared) if key not in structured)
+
+    @staticmethod
+    def _file_value(individual, key, value):
+        if isinstance(value, (list, dict)):
+            logger.warning("Dropping %s of member %s: a list or object can't be imported", key, individual.get("uuid"))
+            return None
+        return value
+
+
+_STRUCTURED_TYPES = ("array", "object")
+
+
+def _declared_individual_fields():
+    """individual_schema's fields and their declared types."""
+    from individual.apps import IndividualConfig
+
+    schema = IndividualConfig.individual_schema or {}
+    if isinstance(schema, str):
+        try:
+            schema = json.loads(schema)
+        except ValueError:
+            schema = {}
+    return {
+        name: field.get("type") if isinstance(field, dict) else None
+        for name, field in (schema.get("properties") or {}).items()
+    }
