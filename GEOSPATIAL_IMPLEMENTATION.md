@@ -57,10 +57,21 @@ ETL scheduled-task registration warning about `int(None)`; this must be diagnose
 before background synchronization acceptance. No migrations were applied by this
 phase. There has been no authenticated live v3 synchronization or map display.
 
-## Phase 2 — stable references and persistence
+## Phase 2 — stable references and persistence (implemented)
 
-Verify the MSR resource fields and membership response against source and live
-fixtures. Introduce a shared location MSR reference model and migration, unique
+Implemented in the local backend location repository: `MsrLocationReference`,
+migration `0033_msr_location_reference`, and `MsrReferenceWriter`. See that
+repository's `GEOSPATIAL_REFERENCES.md` for usage, matching rules and tests.
+Fifteen persistence tests pass against an isolated PostgreSQL schema, exercising
+the actual migration. Django checks and migration drift checks pass. Application
+migrations remain unapplied; no live synchronization has occurred.
+
+The writer links existing active CoreMIS records by unambiguous code and parent
+scope. Unmatched references remain unlinked. It does not create CoreMIS locations
+or infer catchment membership. GraphQL exposure belongs to Phase 4.
+
+The MSR resource fields were verified against local source; live fixtures and
+membership responses still require verification. The reference model is unique
 by configured source instance + original MSR type + original MSR ID. Keep MSR
 code and CoreMIS primary key separate. Link to an existing active Location or
 MicroCatchment only on an unambiguous match; never select a duplicate arbitrarily.
