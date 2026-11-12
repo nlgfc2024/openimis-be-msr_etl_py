@@ -31,16 +31,24 @@ class MsrV3GeoClient:
     def districts(self):
         return self._pages({"type": "districts"})
 
+    def locations(self, location_type, district_id):
+        return self._pages({"type": location_type, "district_id": str(district_id)})
+
+    def membership(self, catchment_id, district_id):
+        endpoint = self.url.removesuffix("/api/v3/geo-locations") + f"/api/v2/micro-catchments/{int(catchment_id)}/villages"
+        return self._pages({"district_id": str(district_id), "per_page": 100}, endpoint=endpoint, legacy=True)
+
     def catchments(self, district_id):
         if district_id is None or not str(district_id).strip():
             raise DataSource.Error("An MSR district ID is required; do not use a CoreMIS ID")
         return self._pages({"type": "catchments", "district_id": str(district_id)})
 
-    def _pages(self, params):
-        url, visited = self.url, set()
+    def _pages(self, params, endpoint=None, legacy=False):
+        endpoint = endpoint or self.url
+        url, visited = endpoint, set()
         while url:
             # Never forward a Bearer token to a host/path supplied by pagination.
-            parsed, expected = urlsplit(url), urlsplit(self.url)
+            parsed, expected = urlsplit(url), urlsplit(endpoint)
             if (parsed.scheme, parsed.netloc, parsed.path) != (
                     expected.scheme, expected.netloc, expected.path):
                 raise DataSource.Error("MSR pagination must stay on the configured geo-locations endpoint")
@@ -70,7 +78,7 @@ class MsrV3GeoClient:
             links = body.get("links") or {}
             if not isinstance(links, dict):
                 raise DataSource.Error("MSR v3 expected a links object")
-            next_url = links.get("next")
+            next_url = body.get("next_page_url") if legacy else links.get("next")
             if next_url is not None and not isinstance(next_url, str):
                 raise DataSource.Error("MSR v3 next link must be a URL")
             yield body["data"]

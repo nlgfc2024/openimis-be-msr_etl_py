@@ -16,6 +16,7 @@ class MsrEtlSourceTypeGQLType(graphene.ObjectType):
     label = graphene.String()
     source_name = graphene.String()
     filter_schema = GenericScalar()
+    supports_initial_pull = graphene.Boolean()
 
 
 class MsrEtlSourceTypesGQLType(graphene.ObjectType):

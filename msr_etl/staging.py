@@ -7,7 +7,7 @@ from django.utils import timezone
 from msr_etl.apps import MsrEtlConfig
 from msr_etl.models import MsrEtlSyncUnit
 from msr_etl.sinks import IndividualImportSink, LocationImportSink
-from msr_etl.source_registry import resolve_individual_source, resolve_location_source
+from msr_etl.source_registry import resolve_individual_source, resolve_location_source, location_sink_class, get_connector
 
 logger = logging.getLogger(__name__)
 
@@ -103,8 +103,13 @@ def _sync_unit_payload(unit, user):
     _, adapter_cls = _RESOLVERS[unit.kind](unit.source_type)
     transformed = adapter_cls(source_type=unit.source_type).transform(unit.raw_payload)
     if transformed:
-        sink = _SINKS[unit.kind](user, source_type=unit.source_type)
+        sink_cls = _SINKS[unit.kind]
+        if unit.kind == MsrEtlSyncUnit.Kind.LOCATION and get_connector(unit.source_type) == "msr_geo_v3":
+            sink_cls = location_sink_class(unit.source_type)
+        sink = sink_cls(user, source_type=unit.source_type)
         sink.push(transformed, f"job_{unit.job_uuid}_unit_{unit.id}")
+    if unit.kind == MsrEtlSyncUnit.Kind.LOCATION and isinstance(unit.raw_payload, dict) and "locations" in unit.raw_payload:
+        return len(unit.raw_payload["locations"]) if transformed else 0
     return len(transformed or [])
 
 
@@ -121,7 +126,9 @@ def _sync_one_unit(unit_id, user):
 
     records = unit.record_count or 0
     try:
-        imported = _sync_unit_payload(unit, user)
+        # A failed writer must roll back before recording failure/retry status.
+        with transaction.atomic():
+            imported = _sync_unit_payload(unit, user)
         MsrEtlSyncUnit.objects.filter(id=unit.id).update(
             sync_status=MsrEtlSyncUnit.Status.SYNCED,
             updated_at=timezone.now(),

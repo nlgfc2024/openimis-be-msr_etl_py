@@ -16,6 +16,23 @@ DEFAULT_CONFIG = {
     "sync_orphan_grace_minutes": 10,
     "job_stale_after_hours": 12,
     "sources": {
+        "msr_geo_v3": {
+            "enabled": False,
+            "connector": "msr_geo_v3",
+            "kind": "location",
+            "display_name": "MSR geospatial publications",
+            "source_name": "MSR",
+            "source_instance": "msr-malawi",
+            "base_url": "http://localhost:8080",
+            "auth_type": "bearer",
+            "auth_bearer_token": "",
+            "timeout_seconds": 60,
+            "filter_schema": {"location": [
+                {"name": "msr_district_id", "label": "MSR district ID (not district code)",
+                 "type": "number", "required": True, "min": 1, "integer": True,
+                 "helpText": "Synchronize publications and verified village memberships for one MSR district. Existing CoreMIS locations are matched by code and parent."},
+            ]},
+        },
         "ubr": {
             "connector": "msr_api",
             "auth_type": "noauth",  # noauth, basic, bearer
@@ -105,9 +122,10 @@ class MsrEtlConfig(AppConfig):
 
     @classmethod
     def _load_config(cls, cfg):
-        for field in cfg:
+        # Saved configuration may predate staging/sweeper settings.
+        for field in DEFAULT_CONFIG.keys() | cfg.keys():
             if hasattr(MsrEtlConfig, field):
-                setattr(MsrEtlConfig, field, cfg[field])
+                setattr(MsrEtlConfig, field, cfg.get(field, DEFAULT_CONFIG.get(field)))
 
     @classmethod
     def get_source_config(cls, source_type):

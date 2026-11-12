@@ -6,7 +6,7 @@ from django.utils import timezone
 
 from core.models import AsyncJob
 from core.services import ProgressReporter
-from msr_etl.apps import MsrEtlConfig
+from msr_etl.apps import DEFAULT_CONFIG, MsrEtlConfig
 from msr_etl.models import MsrEtlSyncUnit
 from msr_etl.staging import (
     has_retryable_failed_units,
@@ -19,7 +19,8 @@ logger = logging.getLogger(__name__)
 
 
 def schedule_tasks(scheduler):
-    sweep_minutes = max(int(MsrEtlConfig.sync_sweep_interval_minutes), 1)
+    configured = MsrEtlConfig.sync_sweep_interval_minutes
+    sweep_minutes = max(int(configured if configured is not None else DEFAULT_CONFIG["sync_sweep_interval_minutes"]), 1)
     scheduler.add_job(
         sweep_sync_units,
         trigger=IntervalTrigger(minutes=sweep_minutes),

@@ -58,3 +58,11 @@ class MsrV3GeoClientTests(TestCase):
     def test_requires_explicit_district(self):
         with self.assertRaises(DataSource.Error):
             self.client.catchments(None)
+
+    def test_membership_uses_verified_v2_endpoint_and_pagination(self):
+        self.session.get.side_effect = [
+            Mock(status_code=200, json=Mock(return_value={"data": [{"id": 40, "catchment_id": 667}], "next_page_url": "?page=2"})),
+            Mock(status_code=200, json=Mock(return_value={"data": [], "next_page_url": None})),
+        ]
+        self.assertEqual(list(self.client.membership(667, 13)), [[{"id": 40, "catchment_id": 667}], []])
+        self.assertEqual(self.session.get.call_args.args[0], "http://localhost:8080/api/v2/micro-catchments/667/villages?page=2")

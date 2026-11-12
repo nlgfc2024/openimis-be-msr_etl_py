@@ -19,7 +19,7 @@ from msr_etl.gql_mutations import (
     ScheduleMsrUbrIndividualsImportMutation,
     ScheduleMsrUbrLocationsImportMutation,
 )
-from msr_etl.source_registry import list_individual_source_types, list_location_source_types
+from msr_etl.source_registry import list_individual_source_types, list_location_source_types, get_connector
 from msr_etl.sources import UBRIndividualSource, UBRLocationSource
 from msr_etl.utils import (
     get_class_by_name,
@@ -36,6 +36,7 @@ def _source_type_options(source_types, kind):
             label=config.get("display_name") or None,
             source_name=config.get("source_name") or config.get("display_name") or None,
             filter_schema=(config.get("filter_schema") or {}).get(kind) or [],
+            supports_initial_pull=get_connector(source_type) != "msr_geo_v3",
         )
 
     return [build(source_type) for source_type in source_types]

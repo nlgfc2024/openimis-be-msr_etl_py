@@ -7,6 +7,7 @@ from msr_etl.source_registry import (
     DEFAULT_SOURCE_TYPE,
     resolve_individual_source,
     resolve_location_source,
+    location_sink_class,
 )
 from msr_etl.sources import DataSource
 from core.models import User
@@ -103,6 +104,7 @@ class UBRLocationService(MsrETLService):
                  ta: str = None,
                  gvh: str = None,
                  village: str = None,
+                 msr_district_id: int = None,
                  source: DataSource = None,
                  adapter: DataAdapter = None,
                  sink: DataSink = None):
@@ -117,13 +119,11 @@ class UBRLocationService(MsrETLService):
         resolved_source_type = source_type or DEFAULT_SOURCE_TYPE
 
         super().__init__(
-            source=source or source_cls(
-                source_type=resolved_source_type,
-                district=district,
-                ta=ta,
-                gvh=gvh,
-                village=village,
+            source=source or _build_source(
+                source_cls, resolved_source_type,
+                filters={"district": district, "ta": ta, "gvh": gvh,
+                         "village": village, "msr_district_id": msr_district_id},
             ),
             adapter=adapter or adapter_cls(source_type=resolved_source_type),
-            sink=sink or LocationImportSink(user)
+            sink=sink or location_sink_class(resolved_source_type)(user, source_type=resolved_source_type)
         )

@@ -25,6 +25,7 @@ class MsrEtlSyncUnit(models.Model):
         VILLAGE = "VILLAGE", "Village"
         PERCENTILE_CHUNK = "PERCENTILE_CHUNK", "Percentile chunk"
         FORM_NUMBERS = "FORM_NUMBERS", "Form numbers"
+        GEO_DISTRICT = "GEO_DISTRICT", "MSR district publication snapshot"
 
     class Kind(models.TextChoices):
         INDIVIDUAL = "individual", "Individual"

@@ -6,8 +6,10 @@ from msr_etl.sources import (
     DataSource, MsrFormNumberSource, OpenimisHouseholdSource, UBRIndividualSource, UBRLocationSource,
 )
 
-ConnectorRegistry = Dict[str, Tuple[Type[DataSource], Type[DataAdapter]]]
+from msr_etl.adapters.msr_geo_adapter import MsrGeoAdapter
+from msr_etl.sources.msr_geo_source import MsrGeoSource
 
+ConnectorRegistry = Dict[str, Tuple[Type[DataSource], Type[DataAdapter]]]
 DEFAULT_SOURCE_TYPE: Final = "ubr"
 DEFAULT_CONNECTOR: Final = "msr_api"
 
@@ -20,7 +22,14 @@ INDIVIDUAL_CONNECTOR_REGISTRY: ConnectorRegistry = {
 
 LOCATION_CONNECTOR_REGISTRY: ConnectorRegistry = {
     "msr_api": (UBRLocationSource, UBRLocationAdapter),
+    "msr_geo_v3": (MsrGeoSource, MsrGeoAdapter),
 }
+
+
+def location_sink_class(source_type=None):
+    from msr_etl.sinks import LocationImportSink
+    from msr_etl.sinks.msr_geo_sink import MsrGeoSink
+    return MsrGeoSink if get_connector(source_type) == "msr_geo_v3" else LocationImportSink
 
 
 class UnknownSourceType(Exception):
@@ -73,4 +82,5 @@ def _list_for_kind(registry, kind):
 
 
 def _supports_kind(source_type, kind):
-    return MsrEtlConfig.get_source_config(source_type).get("kind", "both") in (kind, "both")
+    config = MsrEtlConfig.get_source_config(source_type)
+    return config.get("enabled", True) and config.get("kind", "both") in (kind, "both")

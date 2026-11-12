@@ -2,7 +2,7 @@
 
 ## Phase 1 — local workspace and v3 transport (implemented)
 
-Branch: `feature/msr-geospatial-dashboard`. This branch exists in backend and
+Branch: `feature/geospatial-dashboard`. This branch exists in backend and
 frontend location, MSR ETL, project, and assembly repositories. Existing assembly
 configuration edits were retained. Payroll repositories were not changed.
 
@@ -40,9 +40,8 @@ Add a separate `msr_geo_v3` entry to the backend MSR ETL ModuleConfiguration
 }
 ```
 
-Do not put credentials in frontend settings or commit them. This entry is for
-the transport client only: the UI connector is intentionally not registered
-until the dedicated persistence/staging path exists. Tokens need the MSR v3
+Do not put credentials in frontend settings or commit them. Phase 3 registers
+the dedicated connector; it remains disabled until configured. Tokens need the MSR v3
 location/geospatial read abilities and the corresponding location policies.
 
 Seven mocked transport tests pass, run after Django initialization:
@@ -52,9 +51,9 @@ cd ../openimis-be_py/openIMIS
 ../.venv/bin/python manage.py shell -c 'import unittest; suite = unittest.defaultTestLoader.loadTestsFromName("msr_etl.tests.test_msr_v3_geo_client"); result = unittest.TextTestRunner(verbosity=2).run(suite); raise SystemExit(not result.wasSuccessful())'
 ```
 
-Django `manage.py check` now reports no issues. Startup separately logs an MSR
-ETL scheduled-task registration warning about `int(None)`; this must be diagnosed
-before background synchronization acceptance. No migrations were applied by this
+Django `manage.py check` reports no issues. The scheduled-task registration
+warning about `int(None)` was fixed in Phase 3 by handling configuration defaults
+before app initialization completes. No migrations were applied by this
 phase. There has been no authenticated live v3 synchronization or map display.
 
 ## Phase 2 — stable references and persistence (implemented)
@@ -86,15 +85,69 @@ Acceptance: transactional repeated fixture imports update the same references;
 parents import first; failures roll back; cross-source IDs cannot collide;
 removal clears geometry while delivery failure preserves location identity.
 
-## Phase 3 — background synchronization and import UI
+## Phase 3 — background synchronization and import UI (implemented)
 
-Add the v3 adapter and dedicated writer, then register a location-only connector.
-Extend background staging and retry dispatch, which currently explicitly use the
-legacy writer. Import membership through verified MSR relationships, never polygon
-containment. Preserve legacy household endpoints and sources.
+The location-only `msr_geo_v3` connector now feeds district-scoped background
+staging through `MsrGeoSource` → `MsrGeoAdapter` → `MsrGeoSink`. Each unit is a
+complete district snapshot: district, TAs, GVHs, villages and catchments, followed
+by all pages of the verified membership endpoint:
+`GET /api/v2/micro-catchments/{catchmentId}/villages?district_id=13`.
 
-Acceptance: one district (MSR ID 13, code 213 where verified) and one explicitly
-matched micro-catchment synchronize idempotently; retries and job progress work.
+The dedicated writer persists references and memberships together. Failed fetches
+do not become empty snapshots. Failed writes roll back before retry status is
+recorded; retries reuse staged payloads. Signed URLs are removed before staging.
+Snapshots bind to their original MSR instance, preventing source configuration
+changes from redirecting staged identities. A `GEO_DISTRICT` staging type keeps
+MSR IDs distinct from legacy location codes in sync logs.
+
+Location migration `0034_msrcatchmentvillage` adds explicit verified memberships
+between MSR references. Moves and authoritative empty responses replace only
+the affected catchments atomically. This does not infer village coverage from
+GVHs, repurpose CoreMIS TA/GVH associations, or infer polygon containment.
+MSR ETL migration `0005_alter_msretlsyncunit_unit_type` depends on that schema.
+
+The import UI exposes source-specific filters even before CoreMIS locations exist,
+requires a positive integer MSR district ID, shows source guidance, and hides the
+legacy full-country Initial Pull action when v3 is selected. Existing progress
+and sync logs remain in use. No credentials are included in source-type queries.
+
+Activation:
+
+1. Review `manage.py migrate --plan` and apply pending migrations with
+   `manage.py migrate` using the backend virtual environment.
+2. Merge this entry into the existing backend `msr_etl` ModuleConfiguration
+   `sources` object, keeping household sources and their endpoints intact:
+
+   ```json
+   "msr_geo_v3": {
+     "enabled": true,
+     "base_url": "http://localhost:8080",
+     "source_instance": "msr-malawi",
+     "auth_bearer_token": "<backend-held service token>"
+   }
+   ```
+
+   Connector, kind and district filter defaults come from `DEFAULT_CONFIG`.
+   The token needs access to both v3 publications and v2 micro-catchment villages.
+3. Restart backend workers and rebuild the local fe-msr_etl module. In Import Data
+   → Location select MSR geospatial publications, enter MSR district ID `13`, and
+   choose Pull Data. Use progress and View sync log to inspect the `GEO_DISTRICT`
+   unit. Reference and verified membership counts can be checked in Django.
+
+Verification: 95 backend tests pass in a temporary, rolled-back PostgreSQL schema,
+including legacy staging/jobs regressions, source scheduling, retry rollback,
+membership replacement and source-instance binding. Both location reference and
+membership migrations pass forward/reversal checks. Frontend tests and the local
+module build pass (existing external `flat` dependency warning remains).
+
+Application migrations and credential configuration were not changed. No live
+authenticated MSR synchronization or browser session has been demonstrated.
+Unmatched references remain available for later review, rather than creating
+CoreMIS locations automatically. Map/GraphQL exposure remains Phase 4.
+
+Live acceptance pending: one district (MSR ID 13, code 213 where verified) and one
+explicitly matched micro-catchment synchronize idempotently with verified village
+memberships, retries and job progress.
 
 ## Phase 4 — shared location map and project reuse
 
