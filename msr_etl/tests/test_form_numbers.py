@@ -14,7 +14,7 @@ from msr_etl.models import MsrEtlSyncUnit, MsrEtlUpload
 from msr_etl.services.ubr_service import UBRIndividualService
 from msr_etl.source_registry import resolve_individual_source
 from msr_etl.sources import MsrFormNumberSource
-from msr_etl.views import upload_form_numbers
+from msr_etl.views import upload_import_file
 
 SCTP_CONFIG = {"connector": "msr_form_numbers", "kind": "individual", "form_numbers_per_unit": 2}
 
@@ -146,7 +146,7 @@ class UploadFormNumbersViewTestCase(TestCase):
         request = self.factory.post("/api/msr_etl/form_number_upload/", data, format="multipart")
         if user:
             force_authenticate(request, user=user)
-        return upload_form_numbers(request)
+        return upload_import_file(request)
 
     def test_stores_the_upload_and_reports_what_was_read(self):
         response = self._post({"source_type": "sctp", "file": _csv("form_number\n101\n101\nX\n")}, self.user)
