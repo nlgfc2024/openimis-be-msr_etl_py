@@ -143,3 +143,23 @@ class MsrEtlSourceRun(models.Model):
 
     class Meta:
         db_table = "msr_etl_source_run"
+
+
+class KoboFormVersion(models.Model):
+    """
+    A deployed version of a Kobo form, as kobo_form.normalise_form() describes it: steps, questions and choice
+    labels. Kept per version so each submission is shown with the form it was filled in on.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    source_type = models.CharField(max_length=64)
+    asset_uid = models.CharField(max_length=64)
+    # Kobo's version uid, which submissions carry as __version__; blank when read from an exported XLSForm
+    version_uid = models.CharField(max_length=64, blank=True, default="")
+    version = models.CharField(max_length=64, blank=True, default="")
+    form = models.JSONField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "msr_etl_kobo_form_version"
+        constraints = [models.UniqueConstraint(fields=["source_type", "asset_uid", "version_uid", "version"],
+                                               name="msr_etl_kobo_form_version_unique")]
