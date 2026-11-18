@@ -7,7 +7,7 @@ from django.utils import timezone
 from core.models import AsyncJob
 from core.services import ProgressReporter
 from msr_etl.apps import MsrEtlConfig
-from msr_etl.kobo_runs import start_scheduled_kobo_imports
+from msr_etl.kobo_runs import check_location_choices, start_scheduled_kobo_imports
 from msr_etl.models import MsrEtlSyncUnit
 from msr_etl.staging import (
     has_retryable_failed_units,
@@ -48,6 +48,15 @@ def schedule_tasks(scheduler):
         replace_existing=True,
     )
     logger.info("Scheduled msr_etl Kobo imports every %s minutes", kobo_minutes)
+
+    scheduler.add_job(
+        check_location_choices,
+        trigger=IntervalTrigger(hours=1),
+        id="msr_etl_kobo_location_choices",
+        max_instances=1,
+        replace_existing=True,
+    )
+    logger.info("Scheduled msr_etl Kobo location list check hourly")
 
 
 def sweep_sync_units():
