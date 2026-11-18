@@ -77,6 +77,7 @@ def _store_locations(request, source_type, upload_file, config):
         "upload_id": str(upload.id),
         "records": len(preview["locations"]),
         "level_counts": result["level_counts"],
+        "ignored_columns": result["ignored_columns"],
         "rows": result["row_count"],
         "rejected": result["rejected_count"] + len(preview["conflicts"]),
         "rejected_rows": rejected_rows[:_RESPONSE_REJECTED_ROWS],
