@@ -1,7 +1,9 @@
 import graphene
+from django.contrib.auth.models import AnonymousUser
 
 from msr_etl.apps import MsrEtlConfig
 from msr_etl.gql_queries import (
+    KoboApplicationGQLType,
     MsrEtlServiceGQLType,
     MsrEtlServicesListGQLType,
     MsrEtlSourceTypeGQLType,
@@ -11,7 +13,8 @@ from msr_etl.gql_queries import (
     MsrUbrLocationBatchGQLType,
     MsrUbrLocationsGQLType,
 )
-from msr_etl.models import MsrEtlSyncUnit
+from msr_etl.kobo_form import application_sections, form_for_submission
+from msr_etl.models import KoboSubmission, MsrEtlSyncUnit
 from msr_etl.gql_mutations import (
     MsrEtlServiceMutation,
     SaveMsrUbrIndividualsMutation,
@@ -78,6 +81,11 @@ class Query(graphene.ObjectType):
     )
 
     msr_etl_source_types = graphene.Field(MsrEtlSourceTypesGQLType)
+
+    kobo_applications = graphene.List(
+        KoboApplicationGQLType,
+        individual_id=graphene.Argument(graphene.UUID, required=True),
+    )
 
     msr_etl_sync_units = graphene.Field(
         MsrEtlSyncUnitsGQLType,
@@ -192,6 +200,27 @@ class Query(graphene.ObjectType):
             batches=batches,
             count=sum(batch.count for batch in batches),
         )
+
+    def resolve_kobo_applications(parent, info, individual_id, **kwargs):
+        # The same right and location limits as reading the individual itself
+        from individual.apps import IndividualConfig
+        from individual.gql_queries import IndividualGQLType
+
+        user = info.context.user
+        if type(user) is AnonymousUser or not user.has_perms(IndividualConfig.gql_individual_search_perms):
+            raise PermissionError("Unauthorized")
+        if not IndividualGQLType.get_queryset(None, info).filter(id=individual_id).exists():
+            return []
+        applications = []
+        for submission in KoboSubmission.objects.filter(individual_id=individual_id).order_by("-kobo_id"):
+            form = form_for_submission(submission)
+            applications.append(KoboApplicationGQLType(
+                id=str(submission.id), kobo_id=submission.kobo_id, status=submission.status,
+                reason=submission.reason, submitted_at=submission.submitted_at,
+                form_version=(form or {}).get("version") or "",
+                sections=application_sections(submission, form) if form else [],
+            ))
+        return applications
 
     def resolve_msr_etl_source_types(parent, info, **kwargs):
         if not info.context.user.has_perms(MsrEtlConfig.gql_query_msr_etl_rule_perms):
