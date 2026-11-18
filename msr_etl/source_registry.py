@@ -76,7 +76,11 @@ def _list_for_kind(registry, kind):
     )
 
 
+def source_enabled(source_type=None):
+    # "enabled": false turns a source off, e.g. the default ubr source on an instance without MSR
+    return MsrEtlConfig.get_source_config(source_type or DEFAULT_SOURCE_TYPE).get("enabled", True) is not False
+
+
 def _supports_kind(source_type, kind):
     config = MsrEtlConfig.get_source_config(source_type)
-    # "enabled": false turns a source off, e.g. the default ubr source on an instance without MSR
-    return config.get("enabled", True) is not False and config.get("kind", "both") in (kind, "both")
+    return source_enabled(source_type) and config.get("kind", "both") in (kind, "both")
