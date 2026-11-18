@@ -103,6 +103,7 @@ class UBRLocationService(MsrETLService):
                  ta: str = None,
                  gvh: str = None,
                  village: str = None,
+                 upload_id: str = None,
                  source: DataSource = None,
                  adapter: DataAdapter = None,
                  sink: DataSink = None):
@@ -117,12 +118,10 @@ class UBRLocationService(MsrETLService):
         resolved_source_type = source_type or DEFAULT_SOURCE_TYPE
 
         super().__init__(
-            source=source or source_cls(
-                source_type=resolved_source_type,
-                district=district,
-                ta=ta,
-                gvh=gvh,
-                village=village,
+            source=source or _build_source(
+                source_cls,
+                resolved_source_type,
+                filters={"district": district, "ta": ta, "gvh": gvh, "village": village, "upload_id": upload_id},
             ),
             adapter=adapter or adapter_cls(source_type=resolved_source_type),
             sink=sink or LocationImportSink(user)

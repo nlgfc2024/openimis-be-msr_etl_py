@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from django.test import SimpleTestCase
 
 from msr_etl.adapters import UBRIndividualAdapter, UBRLocationAdapter
@@ -13,6 +15,7 @@ from msr_etl.source_registry import (
 from msr_etl.sources import UBRIndividualSource, UBRLocationSource
 
 
+@patch.object(MsrEtlConfig, "sources", {})
 class ResolveIndividualSourceTestCase(SimpleTestCase):
 
     def test_defaults_to_ubr(self):
@@ -30,6 +33,7 @@ class ResolveIndividualSourceTestCase(SimpleTestCase):
             resolve_individual_source("does-not-exist")
 
 
+@patch.object(MsrEtlConfig, "sources", {})
 class ResolveLocationSourceTestCase(SimpleTestCase):
 
     def test_defaults_to_ubr(self):

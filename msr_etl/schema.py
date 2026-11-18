@@ -19,7 +19,9 @@ from msr_etl.gql_mutations import (
     ScheduleMsrUbrIndividualsImportMutation,
     ScheduleMsrUbrLocationsImportMutation,
 )
-from msr_etl.source_registry import list_individual_source_types, list_location_source_types
+from msr_etl.source_registry import (
+    DEFAULT_SOURCE_TYPE, list_individual_source_types, list_location_source_types, source_enabled,
+)
 from msr_etl.sources import UBRIndividualSource, UBRLocationSource
 from msr_etl.utils import (
     get_class_by_name,
@@ -118,6 +120,8 @@ class Query(graphene.ObjectType):
     def resolve_msr_ubr_individuals(parent, info, **kwargs):
         if not info.context.user.has_perms(MsrEtlConfig.gql_query_msr_etl_rule_perms):
             raise PermissionError("Unauthorized")
+        if not source_enabled():
+            raise ValueError(f"The '{DEFAULT_SOURCE_TYPE}' source is turned off on this instance")
 
         lower_percentile_category = kwargs.get("lower_percentile_category")
         upper_percentile_category = kwargs.get("upper_percentile_category")
@@ -166,6 +170,8 @@ class Query(graphene.ObjectType):
     def resolve_msr_ubr_locations(parent, info, **kwargs):
         if not info.context.user.has_perms(MsrEtlConfig.gql_query_msr_etl_rule_perms):
             raise PermissionError("Unauthorized")
+        if not source_enabled():
+            raise ValueError(f"The '{DEFAULT_SOURCE_TYPE}' source is turned off on this instance")
 
         source = UBRLocationSource()
         raw_batches = source.fetch(

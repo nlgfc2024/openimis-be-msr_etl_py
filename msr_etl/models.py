@@ -60,13 +60,15 @@ class MsrEtlSyncUnit(models.Model):
 
 class MsrEtlUpload(models.Model):
     """
-    A file listing households to import by form number (e.g. UPG's SCTP export). It is read once on
-    upload, so the import job works from the stored list and never re-reads the file.
+    An uploaded import file: households by form number (e.g. UPG's SCTP export) or a location list.
+    It is read once on upload, so the import job works from the stored rows and never re-reads the file.
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     source_type = models.CharField(max_length=64)
     file_name = models.CharField(max_length=255)
     form_numbers = models.JSONField(default=list)
+    # Location lists: the file's places as read (location_file.read_location_file); codes are resolved on import
+    locations = models.JSONField(default=list, blank=True)
     # {"row": <file row>, "value": <cell>, "reason": <why>} for rows that were not usable
     rejected_rows = models.JSONField(default=list)
     uploaded_by = models.CharField(max_length=255, blank=True, default="")
@@ -74,3 +76,19 @@ class MsrEtlUpload(models.Model):
 
     class Meta:
         db_table = "msr_etl_upload"
+
+
+class MsrEtlLocationCodeChange(models.Model):
+    """
+    A temporary location code replaced by another code on the same location. Kobo answers and other
+    records written before the change carry the old code, so lookups follow these (current_location_code).
+    """
+    location_type = models.CharField(max_length=1)
+    old_code = models.CharField(max_length=50, db_index=True)
+    new_code = models.CharField(max_length=50)
+    location_id = models.IntegerField()
+    batch_identifier = models.CharField(max_length=255, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "msr_etl_location_code_change"
