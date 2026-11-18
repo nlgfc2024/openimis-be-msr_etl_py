@@ -182,10 +182,15 @@ def read_location_file(upload_file, levels=None, city_codes=None):
     }
 
 
+class _NoFreeCode(Exception):
+    pass
+
+
 class _Resolver:
     """Codes for a file's places against the MIS, top level first. Each place keeps the MIS location it
     matches (by real code, else by name under its parent), so a re-import never duplicates a place, a real code
-    never changes, and a temporary code is replaced on the same location."""
+    never changes, and a temporary code is replaced on the same location. New temporary codes are handed out
+    last, once every code that follows a replaced prefix is known, so the two can't collide."""
 
     def __init__(self, places, levels):
         from location.models import Location
@@ -195,7 +200,7 @@ class _Resolver:
         self.digits = {level["type"]: level.get("code_digits") for level in levels}
         self.parent_type = {child["type"]: parent["type"] for parent, child in zip(levels, levels[1:])}
         self.places = places
-        self.resolved = {}  # place id -> {"code", "location", "previous_code"}
+        self.resolved = {}  # place id -> {"code" (None until allocated), "location", "previous_code", "row"}
         self.locations, self.conflicts = [], []
         self.changes = {"code_changes": [], "renamed": [], "moved": []}
         self.counts = {name: 0 for name in self.changes}
@@ -230,7 +235,7 @@ class _Resolver:
                    if len(code) == len(prefix) + width and code.startswith(prefix) and code[len(prefix):].isdigit()]
         number = max(numbers, default=0) + 1
         if number >= 10 ** width:
-            raise LocationFileError(f"No free temporary code left under {parent_code}")
+            raise _NoFreeCode(f"no free temporary code left under {parent_code}")
         self.generated += 1
         return f"{prefix}{number:0{width}d}"
 
@@ -238,6 +243,7 @@ class _Resolver:
         parent = self.resolved.get(place["parent"]) if place["parent"] is not None else None
         if place["parent"] is not None and parent is None:
             return None  # left out with its parent
+        # None while the parent waits for a new temporary code
         parent_code = parent["code"] if parent else None
         parent_location = parent["location"] if parent else None
         by_name = self._by_name(place, parent_location)
@@ -263,14 +269,17 @@ class _Resolver:
         elif by_name:
             code, temporary = by_name.code, is_temporary(by_name)
         elif not code:
-            code, temporary = self._new_temporary_code(place["type"], parent_code), True
+            # Handed out in _allocate_new_codes
+            code, temporary = None, True
 
-        if (place["type"], code) in self.taken:
+        if code and (place["type"], code) in self.taken:
             return self._conflict(place, f"code {code} would be given to two places")
-        return self._record(place, code, temporary, previous_code, location, parent_code, parent_location)
+        return self._record(place, code, temporary, previous_code, location, parent, parent_location)
 
-    def _record(self, place, code, temporary, previous_code, location, parent_code, parent_location):
-        self.taken.add((place["type"], code))
+    def _record(self, place, code, temporary, previous_code, location, parent, parent_location):
+        parent_code = parent["code"] if parent else None
+        if code:
+            self.taken.add((place["type"], code))
         if location is not None:
             if same_name(location.name) != same_name(place["name"]):
                 self._report("renamed", {"type": place["type"], "code": code, "from": location.name,
@@ -278,7 +287,7 @@ class _Resolver:
             if place["parent"] is not None and (parent_location is None or location.parent_id != parent_location.id):
                 self._report("moved", {"type": place["type"], "code": code, "name": place["name"],
                                        "from": location.parent.code if location.parent_id else None,
-                                       "to": parent_code})
+                                       "to": parent_code or f"new place '{self.places_by_id[place['parent']]['name']}'"})
         if previous_code:
             self._report("code_changes", {"type": place["type"], "name": place["name"],
                                           "from": previous_code, "to": code})
@@ -287,7 +296,10 @@ class _Resolver:
         if previous_code:
             row["previous_code"] = previous_code
         self.locations.append(row)
-        return {"code": code, "location": location, "previous_code": previous_code}
+        resolved = {"code": code, "location": location, "previous_code": previous_code, "row": row,
+                    "parent": parent, "place": place}
+        self.rows.append(resolved)
+        return resolved
 
     def _follow_replaced_codes(self):
         """MIS locations left out of the file whose temporary code starts with a replaced one get the new prefix."""
@@ -303,6 +315,10 @@ class _Resolver:
                         or not location.code.startswith(old):
                     continue
                 code = new + location.code[len(old):]
+                if (child_type, code) in self.taken:
+                    self.conflicts.append({"row": None, "value": location.name,
+                                           "reason": f"its code would become {code}, which is already given out"})
+                    continue
                 self.taken.add((child_type, code))
                 listed.add((child_type, location.code))
                 self._report("code_changes", {"type": child_type, "name": location.name,
@@ -311,12 +327,38 @@ class _Resolver:
                                        "parent_code": new, "temporary": True, "previous_code": location.code})
                 replaced.append((child_type, location.code, code))
 
+    def _allocate_new_codes(self):
+        """New temporary codes, top level first so each parent has its code; a place that can't get one is left
+        out with everything under it."""
+        dropped = set()
+        for resolved in self.rows:
+            parent = resolved["parent"]
+            if parent is not None and id(parent) in dropped:
+                dropped.add(id(resolved))
+                continue
+            if resolved["code"] is None:
+                try:
+                    resolved["code"] = self._new_temporary_code(resolved["place"]["type"], parent["code"])
+                except _NoFreeCode as exc:
+                    self._conflict(resolved["place"], str(exc))
+                    dropped.add(id(resolved))
+                    continue
+                self.taken.add((resolved["place"]["type"], resolved["code"]))
+                resolved["row"]["code"] = resolved["code"]
+            if parent is not None:
+                resolved["row"]["parent_code"] = parent["code"]
+        rows_out = {id(resolved["row"]) for resolved in self.rows if id(resolved) in dropped}
+        self.locations = [row for row in self.locations if id(row) not in rows_out]
+
     def run(self):
+        self.rows = []  # resolved file places, in the order they were read (parents first)
+        self.places_by_id = {place["id"]: place for place in self.places}
         for place in self.places:
             resolved = self._resolve(place)
             if resolved:
                 self.resolved[place["id"]] = resolved
         self._follow_replaced_codes()
+        self._allocate_new_codes()
         order = {level["type"]: position for position, level in enumerate(self.levels)}
         self.locations.sort(key=lambda row: order[row["type"]])
         return {
