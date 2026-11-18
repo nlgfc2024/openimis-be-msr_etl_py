@@ -9,6 +9,7 @@ from msr_etl.apps import MsrEtlConfig
 from msr_etl.form_numbers import DEFAULT_FORM_NUMBER_COLUMN, FormNumberFileError, read_form_numbers
 from msr_etl.location_file import LocationFileError, read_location_file, resolve_location_codes
 from msr_etl.models import MsrEtlUpload
+from msr_etl.source_registry import source_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,9 @@ def upload_import_file(request):
     upload_file = request.FILES.get("file")
     config = MsrEtlConfig.get_source_config(source_type) if source_type else {}
     handler = _UPLOAD_HANDLERS.get(config.get("connector"))
+    if handler and not source_enabled(source_type):
+        return Response({"success": False, "error": f"Source '{source_type}' is turned off"},
+                        status=status.HTTP_400_BAD_REQUEST)
     if not handler:
         return Response({"success": False, "error": f"Source '{source_type}' does not import from a file"},
                         status=status.HTTP_400_BAD_REQUEST)
