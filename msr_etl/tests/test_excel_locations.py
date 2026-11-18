@@ -116,6 +116,14 @@ class ReadLocationFileTestCase(SimpleTestCase):
 
         self.assertEqual(len(result["places"]), 12)
 
+    def test_refuses_a_misspelt_column_and_lists_other_extra_ones(self):
+        misspelt = HEADER.replace("constituency_code", "consituency_code")
+        with self.assertRaisesRegex(LocationFileError, "'consituency_code' \\(did you mean 'constituency_code'\\?\\)"):
+            _read(misspelt + ROWS)
+
+        result = _read(HEADER.replace("\n", ",council_notes\n") + ROWS.replace("\n", ",\n"))
+        self.assertEqual(result["ignored_columns"], ["council_notes"])
+
     def test_reports_missing_columns(self):
         with self.assertRaisesRegex(LocationFileError, "Missing columns: constituency_name"):
             read_location_file(_csv("city_name,ward_name,neighbourhood_name\n"))
@@ -305,6 +313,7 @@ class UploadLocationFileViewTestCase(TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual((response.data["records"], response.data["rejected"], response.data["generated_codes"],
                           response.data["code_changes_count"]), (12, 0, 7, 0))
+        self.assertEqual(response.data["ignored_columns"], [])
         upload = MsrEtlUpload.objects.get(id=uuid.UUID(response.data["upload_id"]))
         self.assertEqual((len(upload.locations), upload.form_numbers), (12, []))
 
