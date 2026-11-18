@@ -1,11 +1,12 @@
 from typing import Dict, Final, Tuple, Type
 
 from msr_etl.adapters import (
-    DataAdapter, ExcelLocationAdapter, OpenimisHouseholdAdapter, UBRIndividualAdapter, UBRLocationAdapter,
+    DataAdapter, ExcelLocationAdapter, KoboIndividualAdapter, OpenimisHouseholdAdapter, UBRIndividualAdapter,
+    UBRLocationAdapter,
 )
 from msr_etl.apps import MsrEtlConfig
 from msr_etl.sources import (
-    DataSource, ExcelLocationSource, MsrFormNumberSource, OpenimisHouseholdSource, UBRIndividualSource, UBRLocationSource,
+    DataSource, ExcelLocationSource, KoboSubmissionSource, MsrFormNumberSource, OpenimisHouseholdSource, UBRIndividualSource, UBRLocationSource,
 )
 
 ConnectorRegistry = Dict[str, Tuple[Type[DataSource], Type[DataAdapter]]]
@@ -18,6 +19,13 @@ INDIVIDUAL_CONNECTOR_REGISTRY: ConnectorRegistry = {
     "openimis_gql": (OpenimisHouseholdSource, OpenimisHouseholdAdapter),
     # Households listed by form number in an uploaded file (e.g. UPG's SCTP export), fetched from MSR
     "msr_form_numbers": (MsrFormNumberSource, UBRIndividualAdapter),
+    # Applications submitted through a Kobo form (e.g. Urban MEP)
+    "kobo": (KoboSubmissionSource, KoboIndividualAdapter),
+}
+
+# Connectors whose records need their own sink; the others use the kind's default
+_INDIVIDUAL_SINKS = {
+    "kobo": "msr_etl.sinks.kobo_individual_import_sink.KoboIndividualImportSink",
 }
 
 LOCATION_CONNECTOR_REGISTRY: ConnectorRegistry = {
@@ -84,3 +92,12 @@ def source_enabled(source_type=None):
 def _supports_kind(source_type, kind):
     config = MsrEtlConfig.get_source_config(source_type)
     return source_enabled(source_type) and config.get("kind", "both") in (kind, "both")
+
+
+def individual_sink_class(source_type=None):
+    """The sink a source's individual records go to: its connector's own, else IndividualImportSink."""
+    from django.utils.module_loading import import_string
+    from msr_etl.sinks import IndividualImportSink
+
+    path = _INDIVIDUAL_SINKS.get(get_connector(source_type))
+    return import_string(path) if path else IndividualImportSink
