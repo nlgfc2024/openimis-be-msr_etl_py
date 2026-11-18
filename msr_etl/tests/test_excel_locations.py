@@ -180,6 +180,17 @@ class ResolveLocationCodesTestCase(TestCase):
         self.assertEqual(_codes(result["locations"], "D"), {})
         self.assertEqual(_codes(result["locations"], "V"), {})
 
+    def test_a_place_without_a_free_temporary_code_is_left_out_alone(self):
+        # Wards take two digits, so the 100th uncoded ward under one constituency has no code left
+        rows = "".join(f"901,Test City,90101,Test Central,,Ward {n},,Area {n}\n" for n in range(1, 101))
+
+        result = self._resolve(HEADER + rows)
+
+        self.assertEqual(len(_codes(result["locations"], "W")), 99)
+        self.assertEqual([(c["value"], c["reason"]) for c in result["conflicts"]],
+                         [("Ward 100", "no free temporary code left under 90101")])
+        self.assertNotIn("Area 100", _codes(result["locations"], "V"))
+
     def test_a_code_given_for_another_name_is_reported_as_a_rename(self):
         city = Location.objects.create(code="901", name="Test City", type="R")
         Location.objects.create(code="90101", name="Old Name", type="D", parent=city)
@@ -251,6 +262,18 @@ class ExcelLocationImportTestCase(TestCase):
         self.assertEqual(current_location_code("V", "9010101001"), "9010101001")
         self.assertEqual(Location.objects.filter(name="Test East", validity_to__isnull=True).count(), 1)
 
+    def test_a_replaced_prefix_and_a_new_place_never_get_the_same_code(self):
+        self._import(HEADER + "901,Test City,,Test East,,Test Ward B,,Old Area\n")
+        old_area = _active("901T01T01T001", "V")
+
+        # The ward gets its real code; Old Area is left out and New Area has no code yet
+        self._import(HEADER + "901,Test City,,Test East,9010101,Test Ward B,,New Area\n")
+
+        self.assertEqual(_active("9010101T001", "V").id, old_area.id)
+        new_area = Location.objects.get(name="New Area", validity_to__isnull=True)
+        self.assertEqual((new_area.code, new_area.parent.code), ("9010101T002", "9010101"))
+        self.assertEqual(Location.objects.filter(name="Old Area", validity_to__isnull=True).count(), 1)
+
     def test_exports_the_kobo_choice_files(self):
         self._import(HEADER + ROWS)
 
@@ -295,6 +318,13 @@ class UploadLocationFileViewTestCase(TestCase):
         self.assertEqual((response.status_code, response.data["rejected"]), (200, 1))
         self.assertIn("real codes don't change", response.data["rejected_rows"][0]["reason"])
 
+    def test_refuses_a_turned_off_source(self):
+        with patch.object(MsrEtlConfig, "sources", {"council": {**COUNCIL_CONFIG, "enabled": False}}):
+            response = self._post({"source_type": "council", "file": _csv(HEADER + ROWS)})
+
+        self.assertEqual((response.status_code, response.data["error"]), (400, "Source 'council' is turned off"))
+        self.assertFalse(MsrEtlUpload.objects.exists())
+
     def test_reports_an_unusable_file(self):
         response = self._post({"source_type": "council", "file": _csv("a,b\n1,2\n")})
 
@@ -311,3 +341,14 @@ class DisabledSourceTestCase(SimpleTestCase):
         self.assertEqual(list_location_source_types(), ["council"])
         with self.assertRaises(UnknownSourceType):
             resolve_location_source("ubr")
+
+    @patch.object(MsrEtlConfig, "sources", {"ubr": {"enabled": False}})
+    def test_the_msr_queries_refuse_a_disabled_ubr_source(self):
+        from unittest.mock import MagicMock
+        from msr_etl.schema import Query
+
+        info = MagicMock()
+        info.context.user.has_perms.return_value = True
+        for resolve in (Query.resolve_msr_ubr_individuals, Query.resolve_msr_ubr_locations):
+            with self.assertRaisesRegex(ValueError, "'ubr' source is turned off"):
+                resolve(None, info)
