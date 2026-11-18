@@ -7,6 +7,7 @@ from django.utils import timezone
 from core.models import AsyncJob
 from core.services import ProgressReporter
 from core.test_helpers import create_test_interactive_user
+from msr_etl.apps import MsrEtlConfig
 from msr_etl.jobs import _finish
 from msr_etl.models import MsrEtlSyncUnit
 from msr_etl.scheduled_tasks import sweep_sync_units
@@ -29,6 +30,7 @@ def _make_unit(job_uuid):
     )
 
 
+@patch.object(MsrEtlConfig, "sources", {})
 class FailRetrySucceedRegressionTestCase(TestCase):
     # Only the sink/adapter boundary is mocked - registry resolution,
     # sync_staged_units, _finish, and sweep_sync_units all run for real.
