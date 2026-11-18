@@ -50,6 +50,9 @@ class IndividualImportSink(DataSink):
     def __init__(self, user: User, source_type: str = None):
         super().__init__()
         self.source_type = source_type or DEFAULT_DATA_SOURCE
+        # A source can match its records on its own key, e.g. json_ext__national_id for Kobo
+        self.lookup_field = (MsrEtlConfig.get_source_config(self.source_type).get("lookup_field")
+                             or MsrEtlConfig.sink_model_lookup_field)
         self.service = IndividualImportService(resolve_import_user(user))
         self.import_new_workflow = self.get_workflow(IMPORT_NEW_INDIVIDUALS)
         self.update_existing_workflow = self.get_workflow(UPDATE_EXISTING_INDIVIDUALS)
@@ -78,6 +81,7 @@ class IndividualImportSink(DataSink):
         )
         self._raise_if_upload_failed(result_new, 'import')
         logger.debug(f"Imported {len(new_records)} new records with {result_new}")
+        return result_new
 
     def _update_existing_records(self, existing_records, batch_identifier):
         update_file = data_to_file(existing_records, f'update_{batch_identifier}')
@@ -86,6 +90,7 @@ class IndividualImportSink(DataSink):
         )
         self._raise_if_upload_failed(result_existing, 'update')
         logger.debug(f"Updated {len(existing_records)} existing records with {result_existing}")
+        return result_existing
 
     def _raise_if_upload_failed(self, result: dict, action: str):
         upload_uuid = (result or {}).get('data', {}).get('upload_uuid')
@@ -104,7 +109,7 @@ class IndividualImportSink(DataSink):
         raise self.Error(f"Individual {action} workflow failed: {upload.error}")
 
     def _split_existing_and_new(self, data: list[dict]) -> tuple[list[dict], list[dict]]:
-        model_lookup_field = MsrEtlConfig.sink_model_lookup_field
+        model_lookup_field = self.lookup_field
 
         data_ids = [self._get_data_id(record, model_lookup_field) for record in data]
         existing_data_id_to_db_id_map = self._get_existing_individual_ids(data_ids, model_lookup_field)
