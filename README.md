@@ -92,6 +92,7 @@ Each entry under `sources` is one `source_type`. Its `connector` picks the code 
 | `display_name` | Name of the programme the source feeds, shown in the frontend's Programme picker and the benefit plan form (e.g. `Rural Micro Enterprise Program (RMEP)`) |
 | `source_name` | Name of the system the data comes from, shown in import messages ("downloaded from Public Works Program (PWP)"); defaults to `display_name` |
 | `kind` | `individual`, `location` or `both` (default): which imports offer this source |
+| `enabled` | `false` turns the source off: it is not offered, its imports and uploads are refused, and for `ubr` the `msrUbr*` queries are refused too. Use it for the default `ubr` source on an instance without MSR |
 | `base_url` | API base URL. For `msr_api`, empty falls back to `https://malawiubr.org/api/v2` |
 | `households_endpoint_path`, `geo_locations_endpoint_path` | Endpoint paths appended to `base_url` |
 | `auth_type` | `noauth`, `basic` or `bearer`, with the matching credential keys; `openimis_jwt` logs in to a remote openIMIS `base_url` via `tokenAuth` with `auth_basic_username`/`auth_basic_password` and sends `Authorization: Bearer` |
@@ -211,6 +212,42 @@ Imports whole households listed by `form_number` in an uploaded file, each fetch
 | `form_number_column` | Column holding the form numbers (default `form_number`) |
 | `form_numbers_per_unit` | Households per staged unit (default 50) |
 | `form_number_delay_seconds` | Pause between MSR requests (default none) |
+
+### Locations from an uploaded list (`excel_locations`)
+
+Imports an instance's locations from a file instead of MSR, e.g. the Urban MEP city councils' lists (City → Constituency → Ward → Neighbourhood). Location imports only.
+
+1. **Upload**: `POST /api/msr_etl/upload/` (multipart: `file`, `source_type`; import rights; `form_number_upload/` takes it too) reads an `.xlsx`, `.xls` or `.csv` and stores its places as an `MsrEtlUpload`. A workbook is read from its `locations` sheet, else its first sheet. The response previews the import against the MIS as it is now: locations, new temporary codes, codes replaced, renames, moves and rejected rows.
+2. **Import**: the Locations import with `filters: {"upload_id": ...}`. The codes are resolved again when the job runs. Units are one level of one top-level location, so each city imports top-down.
+
+One row per lowest-level location, naming every level above it:
+
+`city_code, city_name, constituency_code, constituency_name, ward_code, ward_name, neighbourhood_code, neighbourhood_name`
+
+Names are required; codes may be blank:
+
+- A code on any row applies to every row naming that place. Places are matched by name under their parent, ignoring case and extra spaces.
+- A blank city code takes the source's `city_codes` entry, a temporary code.
+- Any other blank code becomes a **temporary code**: the parent's code, `T` and a number (`32501T01`, `32501T01T001`). The location is flagged `json_ext.temporary_code`. Real codes may not contain `T`, so the two never collide. A parent with no number left rejects only the place that needed one.
+- A place already in the MIS keeps its code. **A real code never changes**: a file that gives a place another real code than the MIS has is rejected for that place and everything under it.
+- **A real code given for a place with a temporary code replaces it on the same location**, so whatever points at the location (individuals, households) follows. Temporary codes under it take the new prefix, including places left out of the file. Each replacement is stored in `MsrEtlLocationCodeChange`; `location_file.current_location_code(type, code)` maps an old code to the current one, for records written before the change (the Kobo import, in the next PR, maps submitted codes through it).
+
+```json
+"council_locations": {
+  "connector": "excel_locations",
+  "display_name": "City council location lists",
+  "kind": "location",
+  "city_codes": {"Zomba": "ZA"},
+  "filter_schema": {"location": [{"name": "upload_id", "label": "Location list (Excel)", "type": "file", "required": true}]}
+}
+```
+
+| Key | Purpose |
+|---|---|
+| `city_codes` | Temporary codes for cities given without one, by name |
+| `location_levels` | The file's levels, top first: `[{"type", "code_column", "name_column", "code_digits"}]`. Defaults to the four above, with 2, 2 and 3 digits below the city |
+
+**Kobo dropdowns**: `python manage.py export_kobo_location_choices --out <dir> [--cities <code> ...]` writes `cities.csv` (`name,label`), `wards.csv` (`name,label,city`) and `neighbourhoods.csv` (`name,label,city,ward,location_name`) from the MIS locations, for the Kobo form's `select_one_from_file` questions. Run it again after each location import.
 
 ### Keeping sources apart
 
