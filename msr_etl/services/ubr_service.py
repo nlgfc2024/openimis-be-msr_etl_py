@@ -5,6 +5,8 @@ from msr_etl.services.base import MsrETLService
 from msr_etl.sinks import DataSink, IndividualImportSink, LocationImportSink
 from msr_etl.source_registry import (
     DEFAULT_SOURCE_TYPE,
+    get_connector,
+    individual_sink_class,
     resolve_individual_source,
     resolve_location_source,
 )
@@ -48,8 +50,9 @@ class UBRIndividualService(MsrETLService):
                  source: DataSource = None,
                  adapter: DataAdapter = None,
                  sink: DataSink = None):
-        # Area pulls need a district (without one MSR is queried everywhere); file imports name households
-        if not district and not upload_id:
+        # Area pulls need a district (without one MSR is queried everywhere); file imports name households,
+        # and a Kobo import takes whatever was submitted
+        if get_connector(source_type) != "kobo" and not district and not upload_id:
             raise ValueError("district is required for UBR household imports")
         if village and not gvh:
             raise ValueError("gvh is required when village is provided")
@@ -90,7 +93,7 @@ class UBRIndividualService(MsrETLService):
                 },
             ),
             adapter=adapter or adapter_cls(source_type=resolved_source_type),
-            sink=sink or IndividualImportSink(user, source_type=resolved_source_type)
+            sink=sink or individual_sink_class(resolved_source_type)(user, source_type=resolved_source_type)
         )
 
 
