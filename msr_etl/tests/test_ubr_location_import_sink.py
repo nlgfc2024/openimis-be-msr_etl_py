@@ -107,7 +107,7 @@ class TestLocationImportSink(TestCase):
 
     @patch("location.models.Location.objects.filter")
     def test_split_existing_and_new(self, mock_filter):
-        mock_filter.return_value.values_list.return_value = [self.existing_location.code]
+        mock_filter.return_value = [self.existing_location]
 
         data = self.new_location_data + self.update_location_data
         new_records, update_records = self.sink._split_existing_and_new(data)
