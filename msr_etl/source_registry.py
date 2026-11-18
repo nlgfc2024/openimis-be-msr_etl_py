@@ -1,9 +1,11 @@
 from typing import Dict, Final, Tuple, Type
 
-from msr_etl.adapters import DataAdapter, OpenimisHouseholdAdapter, UBRIndividualAdapter, UBRLocationAdapter
+from msr_etl.adapters import (
+    DataAdapter, ExcelLocationAdapter, OpenimisHouseholdAdapter, UBRIndividualAdapter, UBRLocationAdapter,
+)
 from msr_etl.apps import MsrEtlConfig
 from msr_etl.sources import (
-    DataSource, MsrFormNumberSource, OpenimisHouseholdSource, UBRIndividualSource, UBRLocationSource,
+    DataSource, ExcelLocationSource, MsrFormNumberSource, OpenimisHouseholdSource, UBRIndividualSource, UBRLocationSource,
 )
 
 ConnectorRegistry = Dict[str, Tuple[Type[DataSource], Type[DataAdapter]]]
@@ -20,6 +22,8 @@ INDIVIDUAL_CONNECTOR_REGISTRY: ConnectorRegistry = {
 
 LOCATION_CONNECTOR_REGISTRY: ConnectorRegistry = {
     "msr_api": (UBRLocationSource, UBRLocationAdapter),
+    # A location list uploaded as a file (e.g. the city councils' wards and neighbourhoods)
+    "excel_locations": (ExcelLocationSource, ExcelLocationAdapter),
 }
 
 
@@ -73,4 +77,6 @@ def _list_for_kind(registry, kind):
 
 
 def _supports_kind(source_type, kind):
-    return MsrEtlConfig.get_source_config(source_type).get("kind", "both") in (kind, "both")
+    config = MsrEtlConfig.get_source_config(source_type)
+    # "enabled": false turns a source off, e.g. the default ubr source on an instance without MSR
+    return config.get("enabled", True) is not False and config.get("kind", "both") in (kind, "both")
