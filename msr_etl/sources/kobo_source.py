@@ -6,7 +6,8 @@ from django.utils.dateparse import parse_datetime
 from msr_etl.adapters.kobo_adapter import normalise_national_id
 from msr_etl.apps import MsrEtlConfig
 from msr_etl.auth_provider import get_auth_provider
-from msr_etl.models import KoboSubmission, MsrEtlSyncUnit
+from msr_etl.kobo_form import normalise_form, store_form
+from msr_etl.models import KoboFormVersion, KoboSubmission, MsrEtlSyncUnit
 from msr_etl.sources.base import StagedDataSource
 from msr_etl.sources.http import create_retry_session, get_int_config, get_user_agent_header, get_with_resilience
 
@@ -76,7 +77,27 @@ class KoboSubmissionSource(StagedDataSource):
         for unit in self.enumerate_units():
             yield self.fetch_unit(unit), unit["unit_code"]
 
+    def sync_form(self):
+        """Keep the deployed form version, if it is new, so its submissions can be shown as the form."""
+        version_uid = self._get({}, path="").get("deployed_version_id")
+        if not version_uid:
+            return None
+        stored = KoboFormVersion.objects.filter(source_type=self.source_type, asset_uid=self.asset_uid,
+                                                version_uid=version_uid).first()
+        if stored:
+            return stored
+        content = self._get({}, path=f"versions/{version_uid}/").get("content") or {}
+        form = normalise_form(content.get("survey") or [], content.get("choices") or [],
+                              content.get("settings") or {}, version_uid=version_uid)
+        logger.info("Stored version %s of Kobo form %s", form["version"] or version_uid, self.asset_uid)
+        return store_form(self.source_type, self.asset_uid, form)
+
     def enumerate_units(self):
+        try:
+            self.sync_form()
+        except Exception:
+            # The view needs it, the import doesn't
+            logger.exception("Could not store the form of Kobo form %s", self.asset_uid)
         stored = set(self._stored().values_list("kobo_id", flat=True))
         missing = [kobo_id for kobo_id in self.kobo_ids() if kobo_id not in stored]
         # Only one run per source at a time, so a RECEIVED row here is one an earlier run didn't finish
