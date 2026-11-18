@@ -249,6 +249,48 @@ Names are required; codes may be blank. A column that looks like a misspelt one 
 
 **Kobo dropdowns**: `python manage.py export_kobo_location_choices --out <dir> [--cities <code> ...]` writes `cities.csv` (`name,label`), `wards.csv` (`name,label,city`) and `neighbourhoods.csv` (`name,label,city,ward,location_name`) from the MIS locations, for the Kobo form's `select_one_from_file` questions. Run it again after each location import.
 
+### Applications from a Kobo form (`kobo`)
+
+Imports the submissions of one KoboToolbox form as Individuals, e.g. Urban MEP applications. Individual imports only.
+
+- **What is new**: a run takes the submissions after the highest Kobo `_id` already stored (submissions aren't edited once sent). Units are pages of them, counted when the run starts.
+- **Kept for good**: every submission pulled is stored in `KoboSubmission` with its raw answers, its outcome and the Individual it created, updated or was held from.
+- **Answers**: each answer goes under its field name without the group path (`applicant/first_name` → `first_name`). The national ID is upper-cased without spaces, `location_code` is mapped through `current_location_code()` and given the MIS name, and `kobo_uuid` and `submission_time` are added. A submission without a national ID, name or date of birth, or with a location the MIS doesn't have, is not imported; its `KoboSubmission` says why.
+- **Only declared answers are imported**: the individual import refuses columns its `individual_schema` doesn't declare, so other answers stay on the `KoboSubmission` only. The sink refuses to start if a match field isn't in the schema, since then every repeat application would be held.
+- **Matching, on national ID within the source** (`lookup_field`):
+  - not in the MIS: a new Individual;
+  - in the MIS with the same `match_fields` (default first name, surname, date of birth and sex; case and extra spaces ignored): the record is updated;
+  - in the MIS with any of them different: **held**, with the differences, and the record is left as it is.
+  Applications with the same national ID in one run are handled in order, so a repeat is compared with the record the first one created.
+- **One run at a time** per source: the schedule, the webhook and Pull Data all start runs through a lock (`MsrEtlSourceRun`), so two runs can't create the same applicant twice.
+- **When it runs**: every `kobo_import_interval_minutes` (module setting, default 15; `"scheduled": false` turns it off for a source), on Pull Data, and when Kobo calls `POST /api/msr_etl/kobo_webhook/<source_type>/` with the `X-Webhook-Secret` header (or `?secret=`). The webhook only starts a run, and is off without a `webhook_secret`. Scheduled and webhook runs run as `sink_import_username`.
+
+```json
+"kobo": {
+  "connector": "kobo",
+  "display_name": "Urban MEP applications (Kobo)",
+  "kind": "individual",
+  "base_url": "https://<kobo-host>",
+  "asset_uid": "<form uid>",
+  "auth_type": "token",
+  "auth_token": "<read-only API token>",
+  "webhook_secret": "<shared secret>",
+  "page_size": 100,
+  "lookup_field": "json_ext__national_id",
+  "match_fields": ["first_name", "last_name", "dob", "sex"],
+  "filter_schema": {"individual": []}
+}
+```
+
+| Key | Purpose |
+|---|---|
+| `asset_uid` | The Kobo form |
+| `auth_type: token`, `auth_token` | Kobo's `Authorization: Token` |
+| `lookup_field` | The key matching an application to an existing Individual of the source (any source can set one; it falls back to `sink_model_lookup_field`) |
+| `match_fields` | What must also match for a repeat application to update the record |
+| `national_id_field`, `location_field` | The answers holding the national ID and the location code (default `national_id`, `location_code`) |
+| `webhook_secret` | Turns the webhook on |
+
 ### Keeping sources apart
 
 Each source's data stays its own, so an instance can host several programmes that each use one source (e.g. Jobs-Now: RMEP from `pwp`, UPG from `sctp`) without them sharing people or households. On an instance with a single source nothing changes.
