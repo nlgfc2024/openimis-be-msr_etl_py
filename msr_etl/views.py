@@ -10,7 +10,7 @@ from rest_framework.response import Response
 from msr_etl import kobo_runs
 from msr_etl.apps import MsrEtlConfig
 from msr_etl.form_numbers import DEFAULT_FORM_NUMBER_COLUMN, FormNumberFileError, read_form_numbers
-from msr_etl.kobo_documents import INLINE_MIMETYPES
+from msr_etl.kobo_documents import INLINE_MIMETYPES, TableError, read_table
 from msr_etl.location_file import LocationFileError, read_location_file, resolve_location_codes
 from msr_etl.models import ApplicantDocument, ApplicantDocumentAccess, MsrEtlUpload
 from msr_etl.source_registry import source_enabled
@@ -148,11 +148,8 @@ class CanOpenApplicantDocuments(IsAuthenticated):
         return bool(rights) and super().has_permission(request, view) and request.user.has_perms(rights)
 
 
-@api_view(["GET"])
-@permission_classes([CanOpenApplicantDocuments])
-def applicant_document(request, individual_id, document_id):
-    """Stream one applicant document. It is looked up through the individual, which the user must be allowed to
-    see; PDFs and images open in the browser, other files download. Every opening is logged."""
+def _visible_document(request, individual_id, document_id):
+    """A stored document, looked up through its individual, which the user must be allowed to see."""
     from individual.models import Individual
 
     document = ApplicantDocument.objects.filter(id=document_id, individual_id=individual_id,
@@ -160,6 +157,35 @@ def applicant_document(request, individual_id, document_id):
     # The same answer for a document that isn't there and one the user may not see
     if document is None or not Individual.get_queryset(None, request.user).filter(id=individual_id).exists():
         raise Http404
+    return document
+
+
+@api_view(["GET"])
+@permission_classes([CanOpenApplicantDocuments])
+def applicant_document_table(request, individual_id, document_id):
+    """A stored spreadsheet's sheets as rows, for showing it in the page. Logged like an opening."""
+    document = _visible_document(request, individual_id, document_id)
+    try:
+        sheets = read_table(document)
+    except TableError as exc:
+        return Response({"success": False, "error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    except (FileNotFoundError, OSError):
+        logger.error("Applicant document %s is registered but missing from storage: %s", document.id,
+                     document.storage_path)
+        raise Http404
+    ApplicantDocumentAccess.objects.create(document=document, user=request.user, username=request.user.username,
+                                           disposition="table")
+    response = Response({"success": True, "sheets": sheets})
+    response["Cache-Control"] = "private, no-store"
+    return response
+
+
+@api_view(["GET"])
+@permission_classes([CanOpenApplicantDocuments])
+def applicant_document(request, individual_id, document_id):
+    """Stream one applicant document. It is looked up through the individual, which the user must be allowed to
+    see; PDFs and images open in the browser, other files download. Every opening is logged."""
+    document = _visible_document(request, individual_id, document_id)
     try:
         handle = default_storage.open(document.storage_path, "rb")
     except (FileNotFoundError, OSError):
