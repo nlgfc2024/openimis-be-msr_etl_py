@@ -48,7 +48,7 @@ class GeoSourceTests(SimpleTestCase):
                 MsrGeoSource("msr_geo_v3", 13)
 
     def test_schedule_validates_filters_without_http(self):
-        with patch("msr_etl.gql_mutations.run_as_scheduled_job") as schedule:
+        with patch("msr_etl.gql_mutations.run_as_scheduled_job") as schedule, patch("mapping.access.require_district_scope"):
             result = ScheduleMsrUbrLocationsImportMutation._mutate(
                 Mock(), source_type="msr_geo_v3", filters={"msr_district_id": 13},
             )
@@ -88,6 +88,12 @@ class GeoSourceTests(SimpleTestCase):
 
 class GeoStagingTests(TestCase):
     def setUp(self):
+        # These writer tests isolate authorization/config refresh; the mapping
+        # contract tests exercise denial, revocation and configuration rotation.
+        for target in ("mapping.synchronization.refresh_configuration", "mapping.synchronization.require_district_scope"):
+            guard = patch(target)
+            guard.start()
+            self.addCleanup(guard.stop)
         patcher = patch.object(MsrEtlConfig, "sources", {"msr_geo_v3": CONFIG})
         patcher.start()
         self.addCleanup(patcher.stop)

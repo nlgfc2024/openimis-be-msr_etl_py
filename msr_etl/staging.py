@@ -1,6 +1,8 @@
 import logging
 
 from django.db import transaction
+from django.apps import apps
+from django.core.exceptions import PermissionDenied
 from django.db.models import Case, IntegerField, Q, Value, When
 from django.utils import timezone
 
@@ -72,7 +74,13 @@ def stage_unit(job_uuid, source, unit, kind):
         unit_code=unit["unit_code"],
     )
     try:
+        receipt = None
+        if unit["unit_type"] == MsrEtlSyncUnit.UnitType.GEO_DISTRICT and apps.is_installed("mapping"):
+            from mapping.synchronization import prepare_receipt
+            receipt = prepare_receipt(source, sync_unit)
         payload = source.fetch_unit(unit)
+        if receipt is not None:
+            payload["_mapping"] = receipt
         fields = {}
         if isinstance(payload, list):
             payload, fields["record_identities"] = _dedupe_rows(job_uuid, source, payload)
@@ -100,6 +108,9 @@ def _sync_unit_payload(unit, user):
     """Returns how many records were pushed; the adapter drops invalid ones."""
     if unit.raw_payload is None:
         return 0
+    if unit.unit_type == MsrEtlSyncUnit.UnitType.GEO_DISTRICT and apps.is_installed("mapping"):
+        from mapping.synchronization import apply_unit
+        return apply_unit(unit, user)
     _, adapter_cls = _RESOLVERS[unit.kind](unit.source_type)
     transformed = adapter_cls(source_type=unit.source_type).transform(unit.raw_payload)
     if transformed:
@@ -131,18 +142,21 @@ def _sync_one_unit(unit_id, user):
             imported = _sync_unit_payload(unit, user)
         MsrEtlSyncUnit.objects.filter(id=unit.id).update(
             sync_status=MsrEtlSyncUnit.Status.SYNCED,
+            error_detail=None,
             updated_at=timezone.now(),
         )
         return "synced", records, imported
     except Exception as exc:
         logger.warning("Failed to sync unit %s: %s", unit.unit_code, exc)
+        permanent = getattr(exc, "permanent", False) or isinstance(exc, PermissionDenied)
+        attempts = max(unit.attempts + 1, int(MsrEtlConfig.sync_unit_max_attempts)) if permanent else unit.attempts + 1
         MsrEtlSyncUnit.objects.filter(id=unit.id).update(
             sync_status=MsrEtlSyncUnit.Status.FAILED,
             error_detail=str(exc)[:2000],
-            attempts=unit.attempts + 1,
+            attempts=attempts,
             updated_at=timezone.now(),
         )
-        out_of_attempts = unit.attempts + 1 >= int(MsrEtlConfig.sync_unit_max_attempts)
+        out_of_attempts = attempts >= int(MsrEtlConfig.sync_unit_max_attempts)
         return ("failed" if out_of_attempts else "retry"), records, 0
 
 

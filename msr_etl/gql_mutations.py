@@ -284,7 +284,11 @@ class ScheduleMsrUbrLocationsImportMutation(BaseMutation):
             data.pop('client_mutation_label', None)
             service_kwargs = build_schedule_service_kwargs(UBRLocationService, "location", data)
             # constructed only to validate inputs (e.g. gvh without ta) - no UBR call yet
-            UBRLocationService(user, **service_kwargs)
+            validated = UBRLocationService(user, **service_kwargs)
+            from mapping.providers.district import DistrictSource
+            if isinstance(validated.source, DistrictSource):
+                from mapping.access import require_district_scope
+                require_district_scope(user, validated.source.source_instance, validated.source.district_id, "legacy")
 
             run_as_scheduled_job(
                 "msr_etl.jobs.run_ubr_locations_import",

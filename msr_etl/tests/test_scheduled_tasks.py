@@ -31,7 +31,7 @@ class SweepSyncUnitsTestCase(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.user = create_test_interactive_user(username="sweep_tester")
+        cls.user = create_test_interactive_user(username="sweep_tester", password="SweepFixture1!")
 
     def _create_job(self, idle_minutes_ago=None, **kwargs):
         defaults = dict(module="msr_etl", job_type="ubr_individuals_import", task="x.y", user=self.user)
@@ -43,6 +43,19 @@ class SweepSyncUnitsTestCase(TestCase):
             )
             job.refresh_from_db()
         return job
+
+    def test_mapping_job_is_closed_by_existing_sweeper(self):
+        job = self._create_job(module="mapping", job_type="mapping_locations_import", total=1, processed=1)
+        sweep_sync_units()
+        job.refresh_from_db()
+        self.assertEqual(job.status, AsyncJob.Status.SUCCESS)
+
+    def test_mapping_job_is_failed_when_stale(self):
+        job = self._create_job(module="mapping", job_type="mapping_locations_import")
+        AsyncJob.objects.filter(pk=job.pk).update(created_at=timezone.now() - timedelta(hours=13))
+        sweep_sync_units()
+        job.refresh_from_db()
+        self.assertEqual(job.status, AsyncJob.Status.FAILED)
 
     def test_requeues_failed_units_below_max_attempts_for_an_idle_job(self):
         job = self._create_job(idle_minutes_ago=STALE_MINUTES_AGO)

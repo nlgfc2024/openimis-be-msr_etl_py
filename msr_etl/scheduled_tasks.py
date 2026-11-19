@@ -88,7 +88,7 @@ def _close_completed_jobs():
     # Backstop for a job whose worker died before self-closing; jobs that
     # completed normally are already terminal by the time this runs.
     open_jobs = AsyncJob.objects.filter(
-        module="msr_etl",
+        module__in=["msr_etl", "mapping"],
     ).exclude(status__in=AsyncJob.TERMINAL_STATUSES).exclude(total__isnull=True)
 
     for job in open_jobs:
@@ -109,7 +109,7 @@ def _close_completed_jobs():
 def _fail_stale_jobs():
     stale_hours = int(MsrEtlConfig.job_stale_after_hours)
     cutoff = timezone.now() - timedelta(hours=stale_hours)
-    AsyncJob.objects.filter(module="msr_etl", created_at__lt=cutoff).exclude(
+    AsyncJob.objects.filter(module__in=["msr_etl", "mapping"], created_at__lt=cutoff).exclude(
         status__in=AsyncJob.TERMINAL_STATUSES
     ).update(
         status=AsyncJob.Status.FAILED,

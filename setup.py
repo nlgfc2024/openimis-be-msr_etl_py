@@ -20,6 +20,7 @@ setup(
     author='Kamil Malinowski',
     author_email='kmalinowski@soldevelo.com',
     install_requires=[
+        'openimis-be-mapping>=0.2.0',
         'django',
         'requests',
         'pytest-django',

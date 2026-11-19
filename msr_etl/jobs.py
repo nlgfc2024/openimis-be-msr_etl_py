@@ -15,7 +15,16 @@ def run_ubr_individuals_import(reporter, **params):
 
 
 def run_ubr_locations_import(reporter, **params):
+    from django.apps import apps
+    from msr_etl.source_registry import get_connector
+    if apps.is_installed("mapping") and get_connector(params.get("source_type")) == "msr_geo_v3":
+        from mapping.synchronization import refresh_configuration
+        refresh_configuration()
     source = UBRLocationService(reporter.job.user, **params).source
+    from mapping.providers.district import DistrictSource
+    if isinstance(source, DistrictSource) and apps.is_installed("mapping"):
+        from mapping.access import require_district_scope
+        require_district_scope(reporter.job.user, source.source_instance, source.district_id, "legacy")
     _run_staged_import(reporter, source, MsrEtlSyncUnit.Kind.LOCATION)
 
 
