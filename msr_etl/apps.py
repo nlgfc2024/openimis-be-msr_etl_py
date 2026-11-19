@@ -19,6 +19,11 @@ DEFAULT_CONFIG = {
     "kobo_import_interval_minutes": 15,
     # A Kobo run not heard from for this long no longer blocks the next one (its worker died)
     "kobo_run_stale_minutes": 30,
+    # Applicant documents copied from Kobo: where they go in the file storage, how often a failing one is retried,
+    # and the right to open them (national IDs and bank statements: give it to document reviewers only)
+    "kobo_documents_path": "kobo_documents",
+    "kobo_document_max_attempts": 5,
+    "applicant_document_perms": ["953003"],
     "sources": {
         "ubr": {
             "connector": "msr_api",
@@ -106,6 +111,9 @@ class MsrEtlConfig(AppConfig):
     job_stale_after_hours = None
     kobo_import_interval_minutes = None
     kobo_run_stale_minutes = None
+    kobo_documents_path = None
+    kobo_document_max_attempts = None
+    applicant_document_perms = None
 
     sources = None
 
