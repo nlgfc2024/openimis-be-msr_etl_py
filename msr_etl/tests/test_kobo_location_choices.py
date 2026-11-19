@@ -115,7 +115,7 @@ class KoboLocationChoicesTestCase(TestCase):
             self.assertEqual(_editor("kobo").auth_provider.get_auth_header(), {"Authorization": "Token editor-token"})
 
     def test_an_empty_list_is_refused(self):
-        Location.objects.filter(type="V").delete()
+        Location.objects.filter(code="9010101001").delete()
         with self.assertRaisesRegex(ValueError, "No locations for neighbourhoods.csv"):
             choice_files(["901"])
 
