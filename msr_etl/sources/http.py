@@ -114,8 +114,16 @@ def create_retry_session(source_type):
 
 
 def post_with_resilience(source_type, session, url, headers, **kwargs):
+    return _send(source_type, session.post, url, headers, **kwargs)
+
+
+def get_with_resilience(source_type, session, url, headers, **kwargs):
+    return _send(source_type, session.get, url, headers, **kwargs)
+
+
+def _send(source_type, send, url, headers, **kwargs):
     try:
-        return session.post(
+        return send(
             url,
             headers=headers,
             timeout=get_timeout_seconds(source_type),

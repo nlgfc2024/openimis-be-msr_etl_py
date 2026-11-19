@@ -18,7 +18,8 @@ from core.gql.gql_mutations.base_mutation import BaseMutation
 from core.schema import OpenIMISMutation
 from msr_etl.sinks import IndividualImportSink, LocationImportSink
 from msr_etl.services import UBRIndividualService, UBRLocationService
-from msr_etl.source_registry import DEFAULT_SOURCE_TYPE
+from msr_etl import kobo_runs
+from msr_etl.source_registry import DEFAULT_SOURCE_TYPE, get_connector
 from core.services import run_as_scheduled_job
 
 
@@ -156,6 +157,11 @@ class ScheduleMsrUbrIndividualsImportMutation(BaseMutation):
             # constructed only to validate inputs (district/ta/gvh) - no UBR call yet
             UBRIndividualService(user, **service_kwargs)
 
+            if get_connector(service_kwargs.get("source_type")) == kobo_runs.KOBO_CONNECTOR:
+                # One run at a time per Kobo source, whoever starts it
+                kobo_runs.start_import(service_kwargs["source_type"], user=user,
+                                       client_mutation_id=client_mutation_id)
+                return None
             run_as_scheduled_job(
                 "msr_etl.jobs.run_ubr_individuals_import",
                 module="msr_etl",

@@ -15,6 +15,10 @@ DEFAULT_CONFIG = {
     "sync_sweep_interval_minutes": 5,
     "sync_orphan_grace_minutes": 10,
     "job_stale_after_hours": 12,
+    # How often Kobo sources are checked for new submissions (a webhook can start a run sooner)
+    "kobo_import_interval_minutes": 15,
+    # A Kobo run not heard from for this long no longer blocks the next one (its worker died)
+    "kobo_run_stale_minutes": 30,
     "sources": {
         "ubr": {
             "connector": "msr_api",
@@ -100,6 +104,8 @@ class MsrEtlConfig(AppConfig):
     sync_sweep_interval_minutes = None
     sync_orphan_grace_minutes = None
     job_stale_after_hours = None
+    kobo_import_interval_minutes = None
+    kobo_run_stale_minutes = None
 
     sources = None
 

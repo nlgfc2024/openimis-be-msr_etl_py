@@ -25,6 +25,7 @@ class MsrEtlSyncUnit(models.Model):
         VILLAGE = "VILLAGE", "Village"
         PERCENTILE_CHUNK = "PERCENTILE_CHUNK", "Percentile chunk"
         FORM_NUMBERS = "FORM_NUMBERS", "Form numbers"
+        KOBO_PAGE = "KOBO_PAGE", "Kobo page"
 
     class Kind(models.TextChoices):
         INDIVIDUAL = "individual", "Individual"
@@ -92,3 +93,53 @@ class MsrEtlLocationCodeChange(models.Model):
 
     class Meta:
         db_table = "msr_etl_location_code_change"
+
+
+class KoboSubmission(models.Model):
+    """
+    A submission pulled from a Kobo form, kept for good: Kobo runs for a limited time, and every
+    submission must stay traceable to the record it created, updated or was held from.
+    """
+
+    class Status(models.TextChoices):
+        RECEIVED = "RECEIVED", "Received"
+        IMPORTED = "IMPORTED", "Imported"
+        UPDATED = "UPDATED", "Updated an existing record"
+        HELD = "HELD", "Held for review"
+        NO_NATIONAL_ID = "NO_NATIONAL_ID", "No national ID"
+        INVALID = "INVALID", "Invalid"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    source_type = models.CharField(max_length=64)
+    asset_uid = models.CharField(max_length=64)
+    kobo_id = models.BigIntegerField()
+    kobo_uuid = models.CharField(max_length=64, blank=True, default="")
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    data = models.JSONField()
+    national_id = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.RECEIVED, db_index=True)
+    reason = models.TextField(blank=True, default="")
+    individual = models.ForeignKey("individual.Individual", null=True, blank=True, on_delete=models.SET_NULL,
+                                   related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "msr_etl_kobo_submission"
+        constraints = [models.UniqueConstraint(fields=["source_type", "asset_uid", "kobo_id"],
+                                               name="msr_etl_kobo_submission_unique")]
+
+
+class MsrEtlSourceRun(models.Model):
+    """
+    The import job a source is running, one row per source. Starting a job locks this row, so the schedule,
+    a webhook and a user can't start two at once (two Kobo runs would create the same applicants twice).
+    """
+    source_type = models.CharField(max_length=64, primary_key=True)
+    job_uuid = models.UUIDField(null=True, blank=True)
+    # Set while a job is being started, outside the lock (the job must be committed before it runs)
+    claimed_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "msr_etl_source_run"

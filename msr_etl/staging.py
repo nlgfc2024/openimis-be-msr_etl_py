@@ -7,7 +7,7 @@ from django.utils import timezone
 from msr_etl.apps import MsrEtlConfig
 from msr_etl.models import MsrEtlSyncUnit
 from msr_etl.sinks import IndividualImportSink, LocationImportSink
-from msr_etl.source_registry import resolve_individual_source, resolve_location_source
+from msr_etl.source_registry import individual_sink_class, resolve_individual_source, resolve_location_source
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +103,10 @@ def _sync_unit_payload(unit, user):
     _, adapter_cls = _RESOLVERS[unit.kind](unit.source_type)
     transformed = adapter_cls(source_type=unit.source_type).transform(unit.raw_payload)
     if transformed:
-        sink = _SINKS[unit.kind](user, source_type=unit.source_type)
+        sink_cls = _SINKS[unit.kind]
+        if unit.kind == MsrEtlSyncUnit.Kind.INDIVIDUAL and sink_cls is IndividualImportSink:
+            sink_cls = individual_sink_class(unit.source_type)
+        sink = sink_cls(user, source_type=unit.source_type)
         sink.push(transformed, f"job_{unit.job_uuid}_unit_{unit.id}")
     return len(transformed or [])
 

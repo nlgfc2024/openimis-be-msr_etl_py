@@ -1,10 +1,11 @@
 import logging
 
 from rest_framework import status
-from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.decorators import api_view, authentication_classes, permission_classes
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
+from msr_etl import kobo_runs
 from msr_etl.apps import MsrEtlConfig
 from msr_etl.form_numbers import DEFAULT_FORM_NUMBER_COLUMN, FormNumberFileError, read_form_numbers
 from msr_etl.location_file import LocationFileError, read_location_file, resolve_location_codes
@@ -116,3 +117,21 @@ _UPLOAD_HANDLERS = {
     FORM_NUMBER_CONNECTOR: _store_form_numbers,
     LOCATION_FILE_CONNECTOR: _store_locations,
 }
+
+
+@api_view(["POST"])
+@authentication_classes([])
+@permission_classes([AllowAny])
+def kobo_webhook(request, source_type):
+    """Kobo's REST service calls this when a submission arrives; it only starts an import of what is new.
+    The source's webhook_secret must come as the X-Webhook-Secret header (not the URL, which proxies log)."""
+    given = request.headers.get("X-Webhook-Secret")
+    if source_type not in kobo_runs.kobo_source_types() or not kobo_runs.webhook_secret_matches(source_type, given):
+        # The same answer for an unknown source and a wrong secret
+        return Response({"success": False}, status=status.HTTP_403_FORBIDDEN)
+    try:
+        job_uuid = kobo_runs.start_import(source_type)
+    except kobo_runs.ImportAlreadyRunning:
+        # The running import, or the next one, picks the submission up
+        return Response({"success": True, "started": False}, status=status.HTTP_202_ACCEPTED)
+    return Response({"success": True, "started": True, "job_uuid": str(job_uuid)}, status=status.HTTP_202_ACCEPTED)
