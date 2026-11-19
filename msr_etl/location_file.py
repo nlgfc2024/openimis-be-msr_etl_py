@@ -80,6 +80,21 @@ def _columns(df, levels):
     return found
 
 
+def ignored_columns(df, levels):
+    """The file's columns that aren't read, each with the known column it most likely means (or None).
+    A misspelt code column would otherwise drop every real code in it without a word."""
+    import difflib
+
+    known = [column for level in levels for column in (level["name_column"], level["code_column"])]
+    ignored = []
+    for header in df.columns:
+        if str(header).startswith("Unnamed:") or _header(header) in map(_header, known):
+            continue
+        close = difflib.get_close_matches(_header(header), [_header(column) for column in known], n=1, cutoff=0.8)
+        ignored.append({"column": str(header), "did_you_mean": close[0] if close else None})
+    return ignored
+
+
 class _Places:
     """The file's places, each identified by its name under its parent, since codes can be missing."""
 
@@ -145,11 +160,19 @@ def read_location_file(upload_file, levels=None, city_codes=None):
     codes for cities given without one.
 
     Returns {"places": [{"id", "type", "name", "code", "temporary", "parent", "row"}, ...] top level first,
-    "rejected_rows", "rejected_count", "row_count", "level_counts"}. Blank rows are ignored.
+    "rejected_rows", "rejected_count", "row_count", "level_counts", "ignored_columns"}. Blank rows are ignored. A
+    column that looks like a misspelt known one (e.g. consituency_code) fails the file: reading past it would
+    drop the codes in it.
     """
     levels = levels or DEFAULT_LOCATION_LEVELS
     df = _read(upload_file)
     columns = _columns(df, levels)
+    ignored = ignored_columns(df, levels)
+    found = {_header(column) for column in columns}
+    misspelt = [c for c in ignored if c["did_you_mean"] and c["did_you_mean"] not in found]
+    if misspelt:
+        raise LocationFileError("Columns not recognised: " + "; ".join(
+            f"'{c['column']}' (did you mean '{c['did_you_mean']}'?)" for c in misspelt))
 
     places = _Places(levels, city_codes)
     rejected, rejected_count, row_count = [], 0, 0
@@ -179,6 +202,8 @@ def read_location_file(upload_file, levels=None, city_codes=None):
         "row_count": row_count,
         "level_counts": {level["type"]: sum(1 for p in places.places.values() if p["type"] == level["type"])
                          for level in levels},
+        # Extra columns, e.g. a council's notes: not read, listed so a mistake can be seen
+        "ignored_columns": [c["column"] for c in ignored],
     }
 
 

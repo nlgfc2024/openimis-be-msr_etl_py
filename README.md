@@ -224,7 +224,7 @@ One row per lowest-level location, naming every level above it:
 
 `city_code, city_name, constituency_code, constituency_name, ward_code, ward_name, neighbourhood_code, neighbourhood_name`
 
-Names are required; codes may be blank:
+Names are required; codes may be blank. A column that looks like a misspelt one of these (e.g. `consituency_code`) refuses the file with a "did you mean" hint, because reading past it would drop every code in it; other extra columns are ignored and listed in the upload result as `ignored_columns`.
 
 - A code on any row applies to every row naming that place. Places are matched by name under their parent, ignoring case and extra spaces.
 - A blank city code takes the source's `city_codes` entry, a temporary code.
