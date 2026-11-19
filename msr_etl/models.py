@@ -210,7 +210,7 @@ class ApplicantDocumentAccess(models.Model):
     document = models.ForeignKey(ApplicantDocument, on_delete=models.PROTECT, related_name="accesses")
     user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
     username = models.CharField(max_length=255, blank=True, default="")
-    # inline (shown in the browser) or attachment (downloaded)
+    # inline (shown in the browser), attachment (downloaded) or table (a spreadsheet shown in the page)
     disposition = models.CharField(max_length=16)
     accessed_at = models.DateTimeField(auto_now_add=True)
 
