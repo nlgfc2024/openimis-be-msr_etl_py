@@ -291,6 +291,14 @@ Imports the submissions of one KoboToolbox form as Individuals, e.g. Urban MEP a
 | `national_id_field`, `location_field` | The answers holding the national ID and the location code (default `national_id`, `location_code`) |
 | `webhook_secret` | Turns the webhook on |
 
+#### The form in the MIS
+
+The Kobo form is kept as data, so the MIS can follow it without hand edits.
+
+- **Form versions**: `kobo_form.normalise_form()` reads a form, from Kobo's API or an exported XLSForm, into its steps (groups), questions and choice labels. Each version is kept in `KoboFormVersion`. Every Kobo run stores the deployed version if it is new, so each submission is shown with the form it was filled in on (its `__version__`). A submission whose version isn't stored (sent before the first sync) shows its raw answers instead, since another version's labels could be wrong for it.
+- **The individual schema comes from the form**: `python manage.py kobo_form --source <source_type> [--xlsform <file>] [--schema-out <file>] [--individual-config <file>]` stores the form (from Kobo, or from an exported XLSForm) and writes the schema: one property per answer, titled with its question and typed for the import (`integer`, `number`, else `string`), with `national_id` unique and the Kobo references added. `--individual-config` sets `individual_schema` in an individual module config file, e.g. in coremis-configs. Re-run it after a form change, since the import refuses answers the schema doesn't declare.
+- **An application as the form**: the `koboApplications(individualId)` query returns an Individual's applications, newest first, each with its status and reason, form version, and its answers laid out as the form's steps: question labels, choice labels for select answers, and MIS names for city, ward and neighbourhood answers. Questions an applicant didn't reach are left out. It needs the individual search right and follows the individual's location limits.
+
 ### Keeping sources apart
 
 Each source's data stays its own, so an instance can host several programmes that each use one source (e.g. Jobs-Now: RMEP from `pwp`, UPG from `sctp`) without them sharing people or households. On an instance with a single source nothing changes.

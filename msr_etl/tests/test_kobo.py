@@ -1,4 +1,5 @@
 import json
+import os
 import uuid
 from datetime import timedelta
 from unittest.mock import MagicMock, patch
@@ -16,6 +17,7 @@ from msr_etl import kobo_runs
 from msr_etl.adapters import KoboIndividualAdapter
 from msr_etl.apps import MsrEtlConfig
 from msr_etl.auth_provider import get_auth_provider
+from msr_etl.kobo_form import individual_schema_json, read_xlsform
 from msr_etl.models import KoboSubmission, MsrEtlLocationCodeChange, MsrEtlSourceRun
 from msr_etl.services.ubr_service import UBRIndividualService
 from msr_etl.sinks import KoboIndividualImportSink
@@ -29,11 +31,9 @@ KOBO_CONFIG = {
     "lookup_field": "json_ext__national_id", "webhook_secret": "hook-secret",
 }
 SOURCES = {"kobo": KOBO_CONFIG}
-# The part of the UMEP individual schema these tests send
-UMEP_SCHEMA = json.dumps({"$schema": "http://json-schema.org/draft-07/schema#", "type": "object", "properties": {
-    "national_id": {"type": "string", "uniqueness": True}, "sex": {"type": "string"}, "tpin": {"type": "string"},
-    "kobo_uuid": {"type": "string"}, "submission_time": {"type": "string"},
-}})
+# The schema generated from the final UMEP application form
+UMEP_SCHEMA = individual_schema_json(read_xlsform(os.path.join(os.path.dirname(__file__), "fixtures",
+                                                               "umep_application_form.xlsx")))
 
 
 def _submission(kobo_id, national_id="ab12 cd34", first_name="Grace", last_name="Banda", dob="1995-04-02",
@@ -63,6 +63,12 @@ class TokenAuthTestCase(SimpleTestCase):
 
 @patch.object(MsrEtlConfig, "sources", SOURCES)
 class KoboSubmissionSourceTestCase(TestCase):
+
+    def setUp(self):
+        # Storing the form is tested in test_kobo_form; here only the submissions matter
+        patcher = patch.object(KoboSubmissionSource, "sync_form")
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def _kobo(self, ids, rows=()):
         """Kobo answering the ids-only listing with ids, and a fetch by id with rows."""

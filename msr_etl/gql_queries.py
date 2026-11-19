@@ -60,3 +60,15 @@ class MsrEtlSyncUnitsGQLType(graphene.ObjectType):
     units = graphene.List(MsrEtlSyncUnitGQLType)
     count = graphene.Int()
     total_count = graphene.Int()
+
+
+class KoboApplicationGQLType(graphene.ObjectType):
+    """One Kobo application of an individual, laid out as the form it was filled in on."""
+    id = graphene.String()
+    kobo_id = graphene.Int()
+    status = graphene.String()
+    reason = graphene.String()
+    submitted_at = graphene.DateTime()
+    form_version = graphene.String()
+    # [{"label", "fields": [{"name", "label", "value"}]}]
+    sections = GenericScalar()
