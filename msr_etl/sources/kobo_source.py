@@ -6,6 +6,7 @@ from django.utils.dateparse import parse_datetime
 from msr_etl.adapters.kobo_adapter import normalise_national_id
 from msr_etl.apps import MsrEtlConfig
 from msr_etl.auth_provider import get_auth_provider
+from msr_etl.kobo_documents import register_documents
 from msr_etl.kobo_form import normalise_form, store_form
 from msr_etl.models import KoboFormVersion, KoboSubmission, MsrEtlSyncUnit
 from msr_etl.sources.base import StagedDataSource
@@ -64,11 +65,12 @@ class KoboSubmissionSource(StagedDataSource):
             **self.auth_provider.get_auth_header(),
         }
 
-    def request(self, method, path, expected=(200,), **kwargs):
-        """A call to this form's API (e.g. "DELETE", "files/<uid>/"); anything but an expected status is an error."""
+    def request(self, method, path, expected=(200,), headers=None, **kwargs):
+        """A call to this form's API (e.g. "DELETE", "files/<uid>/"); anything but an expected status is an error.
+        headers are added to the source's (e.g. an Accept for a file)."""
         url = f"{self.base_url}/api/v2/assets/{self.asset_uid}/{path}"
         send = getattr(create_retry_session(self.source_type), method.lower())
-        response = send_with_resilience(self.source_type, send, url, self._headers(), **kwargs)
+        response = send_with_resilience(self.source_type, send, url, {**self._headers(), **(headers or {})}, **kwargs)
         if response.status_code not in expected:
             raise self.Error(f"Kobo returned {response.status_code} for {method} {path or 'the form'}: "
                              f"{response.text[:300]}")
@@ -157,6 +159,8 @@ class KoboSubmissionSource(StagedDataSource):
             )
             for row in rows if row.get("_id") is not None
         ], ignore_conflicts=True, batch_size=500)
+        # Their files are registered with them, so none is missed whatever happens to the submission
+        register_documents(self.source_type, self.asset_uid, rows)
 
     def _national_id(self, row):
         field = self._config().get("national_id_field") or "national_id"
