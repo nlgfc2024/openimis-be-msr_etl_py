@@ -13,7 +13,7 @@ from msr_etl.gql_queries import (
     MsrUbrLocationBatchGQLType,
     MsrUbrLocationsGQLType,
 )
-from msr_etl.kobo_form import application_sections, form_for_submission
+from msr_etl.kobo_form import application_sections, form_for_submission, raw_answers
 from msr_etl.models import KoboSubmission, MsrEtlSyncUnit
 from msr_etl.gql_mutations import (
     MsrEtlServiceMutation,
@@ -218,7 +218,7 @@ class Query(graphene.ObjectType):
                 id=str(submission.id), kobo_id=submission.kobo_id, status=submission.status,
                 reason=submission.reason, submitted_at=submission.submitted_at,
                 form_version=(form or {}).get("version") or "",
-                sections=application_sections(submission, form) if form else [],
+                sections=application_sections(submission, form) if form else raw_answers(submission),
             ))
         return applications
 
