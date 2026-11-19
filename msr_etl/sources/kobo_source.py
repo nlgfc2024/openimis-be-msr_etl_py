@@ -1,9 +1,9 @@
 import json
 import logging
 
-from django.db.models import Max
 from django.utils.dateparse import parse_datetime
 
+from msr_etl.adapters.kobo_adapter import normalise_national_id
 from msr_etl.apps import MsrEtlConfig
 from msr_etl.auth_provider import get_auth_provider
 from msr_etl.models import KoboSubmission, MsrEtlSyncUnit
@@ -19,9 +19,10 @@ _MAX_PAGE_SIZE = 30000
 
 class KoboSubmissionSource(StagedDataSource):
     """
-    New submissions of one Kobo form: those after the highest Kobo _id already stored. Submissions are
-    never edited after they are sent, so _id is enough to know what is new. A unit is one page of them,
-    counted when the job starts; later submissions wait for the next run.
+    The submissions of one Kobo form that the MIS hasn't finished: those Kobo has but the MIS hasn't stored, and
+    stored ones still RECEIVED (an earlier run failed on them). Submissions aren't edited after they are sent,
+    so their _id is enough to know which are new. Nothing is skipped for good: a page that fails is fetched again
+    by the next run. A unit is up to page_size submissions; later ones wait for the next run.
     """
 
     def __init__(self, source_type: str, auth_provider=None):
@@ -38,10 +39,19 @@ class KoboSubmissionSource(StagedDataSource):
     def _config(self):
         return MsrEtlConfig.get_source_config(self.source_type)
 
-    def last_pulled_id(self):
-        return KoboSubmission.objects.filter(
-            source_type=self.source_type, asset_uid=self.asset_uid,
-        ).aggregate(last=Max("kobo_id"))["last"] or 0
+    def _stored(self):
+        return KoboSubmission.objects.filter(source_type=self.source_type, asset_uid=self.asset_uid)
+
+    def kobo_ids(self):
+        """Every submission id the form has, oldest first (ids only, so one request covers many)."""
+        ids, start = [], 0
+        while True:
+            results = self._get({"fields": json.dumps(["_id"]), "sort": json.dumps({"_id": 1}),
+                                 "start": start, "limit": _MAX_PAGE_SIZE}).get("results") or []
+            ids.extend(row["_id"] for row in results if row.get("_id") is not None)
+            if len(results) < _MAX_PAGE_SIZE:
+                return ids
+            start += len(results)
 
     def _headers(self):
         return {
@@ -67,26 +77,35 @@ class KoboSubmissionSource(StagedDataSource):
             yield self.fetch_unit(unit), unit["unit_code"]
 
     def enumerate_units(self):
-        after = self.last_pulled_id()
-        count = int(self._get({"query": json.dumps({"_id": {"$gt": after}}), "limit": 1}).get("count") or 0)
-        logger.info("Kobo form %s has %s new submissions after _id %s", self.asset_uid, count, after)
+        stored = set(self._stored().values_list("kobo_id", flat=True))
+        missing = [kobo_id for kobo_id in self.kobo_ids() if kobo_id not in stored]
+        # Only one run per source at a time, so a RECEIVED row here is one an earlier run didn't finish
+        unfinished = list(self._stored().filter(status=KoboSubmission.Status.RECEIVED)
+                          .order_by("kobo_id").values_list("kobo_id", flat=True))
+        logger.info("Kobo form %s: %s new submissions, %s to retry", self.asset_uid, len(missing), len(unfinished))
+        return self._units(missing, "new", stored=False) + self._units(unfinished, "retry", stored=True)
+
+    def _units(self, ids, label, stored):
         return [
             {
                 "unit_type": MsrEtlSyncUnit.UnitType.KOBO_PAGE,
-                # the cursor and the page, e.g. "after 120, from 200"
-                "unit_code": f"{after}+{start}",
-                "after": after,
-                "start": start,
+                # e.g. "new 201-300", "retry 12-12"
+                "unit_code": f"{label} {chunk[0]}-{chunk[-1]}",
+                "kobo_ids": chunk,
+                "stored": stored,
             }
-            for start in range(0, count, self.page_size)
+            for start in range(0, len(ids), self.page_size)
+            for chunk in [ids[start:start + self.page_size]]
         ]
 
     def fetch_unit(self, unit):
+        if unit["stored"]:
+            return [submission.data for submission in self._stored().filter(kobo_id__in=unit["kobo_ids"])
+                    .order_by("kobo_id")]
         rows = self._get({
-            "query": json.dumps({"_id": {"$gt": unit["after"]}}),
+            "query": json.dumps({"_id": {"$in": unit["kobo_ids"]}}),
             "sort": json.dumps({"_id": 1}),
-            "start": unit["start"],
-            "limit": self.page_size,
+            "limit": len(unit["kobo_ids"]),
         }).get("results") or []
         self._store(rows)
         return rows
@@ -100,10 +119,16 @@ class KoboSubmissionSource(StagedDataSource):
                 kobo_id=row["_id"],
                 kobo_uuid=str(row.get("_uuid") or ""),
                 submitted_at=parse_datetime(str(row.get("_submission_time") or "")),
+                national_id=self._national_id(row),
                 data=row,
             )
             for row in rows if row.get("_id") is not None
         ], ignore_conflicts=True, batch_size=500)
+
+    def _national_id(self, row):
+        field = self._config().get("national_id_field") or "national_id"
+        answer = next((value for key, value in row.items() if key.split("/")[-1] == field), "")
+        return normalise_national_id(answer)[:64]
 
     def count_records(self, payload):
         return len(payload or [])
