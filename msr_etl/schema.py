@@ -3,6 +3,7 @@ from django.contrib.auth.models import AnonymousUser
 
 from msr_etl.apps import MsrEtlConfig
 from msr_etl.gql_queries import (
+    ApplicantDocumentGQLType,
     KoboApplicationGQLType,
     MsrEtlServiceGQLType,
     MsrEtlServicesListGQLType,
@@ -13,8 +14,8 @@ from msr_etl.gql_queries import (
     MsrUbrLocationBatchGQLType,
     MsrUbrLocationsGQLType,
 )
-from msr_etl.kobo_form import application_sections, form_for_submission, raw_answers
-from msr_etl.models import KoboSubmission, MsrEtlSyncUnit
+from msr_etl.kobo_form import application_sections, form_fields, form_for_submission, raw_answers
+from msr_etl.models import ApplicantDocument, KoboSubmission, MsrEtlSyncUnit
 from msr_etl.gql_mutations import (
     MsrEtlServiceMutation,
     SaveMsrUbrIndividualsMutation,
@@ -84,6 +85,11 @@ class Query(graphene.ObjectType):
 
     kobo_applications = graphene.List(
         KoboApplicationGQLType,
+        individual_id=graphene.Argument(graphene.UUID, required=True),
+    )
+
+    applicant_documents = graphene.List(
+        ApplicantDocumentGQLType,
         individual_id=graphene.Argument(graphene.UUID, required=True),
     )
 
@@ -201,7 +207,8 @@ class Query(graphene.ObjectType):
             count=sum(batch.count for batch in batches),
         )
 
-    def resolve_kobo_applications(parent, info, individual_id, **kwargs):
+    @staticmethod
+    def _visible_individual(info, individual_id):
         # The same right and location limits as reading the individual itself
         from individual.apps import IndividualConfig
         from individual.gql_queries import IndividualGQLType
@@ -209,7 +216,32 @@ class Query(graphene.ObjectType):
         user = info.context.user
         if type(user) is AnonymousUser or not user.has_perms(IndividualConfig.gql_individual_search_perms):
             raise PermissionError("Unauthorized")
-        if not IndividualGQLType.get_queryset(None, info).filter(id=individual_id).exists():
+        return IndividualGQLType.get_queryset(None, info).filter(id=individual_id).exists()
+
+    def resolve_applicant_documents(parent, info, individual_id, **kwargs):
+        if not Query._visible_individual(info, individual_id):
+            return []
+        rights = MsrEtlConfig.applicant_document_perms or []
+        can_open = bool(rights) and info.context.user.has_perms(rights)
+        documents, labels = [], {}
+        for document in ApplicantDocument.objects.filter(individual_id=individual_id) \
+                .select_related("submission").order_by("-submission__kobo_id", "question"):
+            submission = document.submission
+            if submission.id not in labels:
+                form = form_for_submission(submission)
+                labels[submission.id] = {f["name"]: f["label"] for f in form_fields(form)} if form else {}
+            stored = document.status == ApplicantDocument.Status.STORED
+            documents.append(ApplicantDocumentGQLType(
+                id=str(document.id), kobo_id=submission.kobo_id, document_type=document.document_type,
+                label=labels[submission.id].get(document.document_type) or document.document_type,
+                filename=document.filename, mimetype=document.mimetype, size=document.size, status=document.status,
+                stored_at=document.stored_at, can_open=can_open and stored,
+                url=f"msr_etl/individuals/{individual_id}/documents/{document.id}/" if can_open and stored else None,
+            ))
+        return documents
+
+    def resolve_kobo_applications(parent, info, individual_id, **kwargs):
+        if not Query._visible_individual(info, individual_id):
             return []
         applications = []
         for submission in KoboSubmission.objects.filter(individual_id=individual_id).order_by("-kobo_id"):
