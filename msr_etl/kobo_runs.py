@@ -51,6 +51,14 @@ def _start_exclusive(lock_key, task, job_type, params, user=None, client_mutatio
     return job_uuid
 
 
+def _still_running(job_uuid):
+    """Queued or running, and heard from lately: a job whose worker died stops holding the lock after
+    kobo_run_stale_minutes, instead of until the stale-job sweep (job_stale_after_hours)."""
+    stale_minutes = int(MsrEtlConfig.kobo_run_stale_minutes or 30)
+    return AsyncJob.objects.filter(id=job_uuid, updated_at__gte=timezone.now() - timedelta(minutes=stale_minutes)) \
+        .exclude(status__in=AsyncJob.TERMINAL_STATUSES).exists()
+
+
 def _claim(lock_key):
     for _ in range(2):
         try:
@@ -58,8 +66,7 @@ def _claim(lock_key):
                 run, _ = MsrEtlSourceRun.objects.select_for_update().get_or_create(source_type=lock_key)
                 if run.claimed_at and run.claimed_at > timezone.now() - CLAIM_TIMEOUT:
                     raise ImportAlreadyRunning(f"A '{lock_key}' job is being started")
-                if run.job_uuid and AsyncJob.objects.filter(id=run.job_uuid).exclude(
-                        status__in=AsyncJob.TERMINAL_STATUSES).exists():
+                if run.job_uuid and _still_running(run.job_uuid):
                     raise ImportAlreadyRunning(f"A '{lock_key}' job is already running")
                 run.claimed_at = timezone.now()
                 run.save()
@@ -85,8 +92,8 @@ def start_scheduled_kobo_imports():
 
 def webhook_secret_matches(source_type, given):
     secret = str(MsrEtlConfig.get_source_config(source_type).get("webhook_secret") or "")
-    # No secret configured means the webhook is off
-    return bool(secret) and hmac.compare_digest(secret, str(given or ""))
+    # No secret configured means the webhook is off; bytes, so any input compares instead of raising
+    return bool(secret) and hmac.compare_digest(secret.encode("utf-8"), str(given or "").encode("utf-8"))
 
 
 def _import_user():
