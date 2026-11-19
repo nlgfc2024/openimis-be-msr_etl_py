@@ -76,7 +76,7 @@ class MsrV3GeoClient:
             if not all(isinstance(row, dict) for row in body["data"]):
                 raise DataSource.Error("MSR v3 data must contain objects")
             links = body.get("links") or {}
-            if not isinstance(links, dict):
+            if not legacy and not isinstance(links, dict):
                 raise DataSource.Error("MSR v3 expected a links object")
             next_url = body.get("next_page_url") if legacy else links.get("next")
             if next_url is not None and not isinstance(next_url, str):
