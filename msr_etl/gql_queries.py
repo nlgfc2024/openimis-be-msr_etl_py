@@ -88,4 +88,6 @@ class ApplicantDocumentGQLType(graphene.ObjectType):
     stored_at = graphene.DateTime()
     # Relative to the API root, for a user with the applicant document right
     url = graphene.String()
+    # A spreadsheet's rows, for showing it in the page as a table
+    table_url = graphene.String()
     can_open = graphene.Boolean()
