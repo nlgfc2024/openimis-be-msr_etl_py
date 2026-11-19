@@ -64,6 +64,12 @@ class TokenAuthTestCase(SimpleTestCase):
 @patch.object(MsrEtlConfig, "sources", SOURCES)
 class KoboSubmissionSourceTestCase(TestCase):
 
+    def setUp(self):
+        # Storing the form is tested in test_kobo_form; here only the submissions matter
+        patcher = patch.object(KoboSubmissionSource, "sync_form")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def _kobo(self, ids, rows=()):
         """Kobo answering the ids-only listing with ids, and a fetch by id with rows."""
         def answer(source_type, session, url, headers, params):
