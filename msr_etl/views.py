@@ -124,8 +124,8 @@ _UPLOAD_HANDLERS = {
 @permission_classes([AllowAny])
 def kobo_webhook(request, source_type):
     """Kobo's REST service calls this when a submission arrives; it only starts an import of what is new.
-    The source's webhook_secret must come as the X-Webhook-Secret header (or ?secret=)."""
-    given = request.headers.get("X-Webhook-Secret") or request.query_params.get("secret")
+    The source's webhook_secret must come as the X-Webhook-Secret header (not the URL, which proxies log)."""
+    given = request.headers.get("X-Webhook-Secret")
     if source_type not in kobo_runs.kobo_source_types() or not kobo_runs.webhook_secret_matches(source_type, given):
         # The same answer for an unknown source and a wrong secret
         return Response({"success": False}, status=status.HTTP_403_FORBIDDEN)
