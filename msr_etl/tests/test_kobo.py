@@ -64,30 +64,62 @@ class TokenAuthTestCase(SimpleTestCase):
 @patch.object(MsrEtlConfig, "sources", SOURCES)
 class KoboSubmissionSourceTestCase(TestCase):
 
-    def test_pages_the_submissions_after_the_last_one_stored(self):
-        KoboSubmission.objects.create(source_type="kobo", asset_uid="aForm", kobo_id=7, data={})
+    def _kobo(self, ids, rows=()):
+        """Kobo answering the ids-only listing with ids, and a fetch by id with rows."""
+        def answer(source_type, session, url, headers, params):
+            if params.get("fields"):
+                return _response({"results": [{"_id": kobo_id} for kobo_id in ids]})
+            wanted = set(json.loads(params["query"])["_id"]["$in"])
+            return _response({"results": [row for row in rows if row["_id"] in wanted]})
+        return patch("msr_etl.sources.kobo_source.get_with_resilience", side_effect=answer)
+
+    def test_takes_the_submissions_not_stored_yet(self):
+        KoboSubmission.objects.create(source_type="kobo", asset_uid="aForm", kobo_id=7, status="IMPORTED", data={})
         source = KoboSubmissionSource("kobo")
-        with patch("msr_etl.sources.kobo_source.get_with_resilience", return_value=_response({"count": 3})) as get:
+        with self._kobo([5, 7, 8, 9, 10]) as get:
             units = source.enumerate_units()
 
         url, params = get.call_args[0][2], get.call_args[1]["params"]
         self.assertEqual(url, "http://kobo.test/api/v2/assets/aForm/data/")
-        self.assertEqual(json.loads(params["query"]), {"_id": {"$gt": 7}})
+        self.assertEqual(json.loads(params["fields"]), ["_id"])
         self.assertEqual(get.call_args[0][3]["Authorization"], "Token secret-token")
-        self.assertEqual([(unit["after"], unit["start"]) for unit in units], [(7, 0), (7, 2)])
+        # page_size is 2; 5 is older than the stored 7 but was never stored, so it is taken too
+        self.assertEqual([(u["unit_code"], u["kobo_ids"], u["stored"]) for u in units],
+                         [("new 5-8", [5, 8], False), ("new 9-10", [9, 10], False)])
+
+    def test_a_page_that_failed_is_fetched_by_the_next_run(self):
+        source = KoboSubmissionSource("kobo")
+        rows = [_submission(n) for n in (1, 2, 3, 4)]
+        with self._kobo([1, 2, 3, 4], rows):
+            first, second = source.enumerate_units()
+            # The first page fails; the second is stored
+            source.fetch_unit(second)
+            self.assertEqual([u["kobo_ids"] for u in source.enumerate_units() if not u["stored"]], [[1, 2]])
 
     def test_keeps_every_submission_it_fetches(self):
         source = KoboSubmissionSource("kobo")
-        rows = [_submission(8), _submission(9)]
-        with patch("msr_etl.sources.kobo_source.get_with_resilience", return_value=_response({"results": rows})) as get:
-            self.assertEqual(source.fetch_unit({"after": 7, "start": 2}), rows)
-            source.fetch_unit({"after": 7, "start": 2})  # a retried page stores nothing twice
+        rows = [_submission(8), _submission(9, national_id=" xy12 ab34")]
+        unit = {"kobo_ids": [8, 9], "stored": False}
+        with self._kobo([8, 9], rows) as get:
+            self.assertEqual(source.fetch_unit(unit), rows)
+            source.fetch_unit(unit)  # a retried page stores nothing twice
 
         params = get.call_args[1]["params"]
-        self.assertEqual((params["start"], params["limit"], json.loads(params["sort"])), (2, 2, {"_id": 1}))
-        self.assertEqual(list(KoboSubmission.objects.order_by("kobo_id").values_list("kobo_id", "kobo_uuid", "status")),
-                         [(8, "uuid-8", "RECEIVED"), (9, "uuid-9", "RECEIVED")])
-        self.assertEqual(source.last_pulled_id(), 9)
+        self.assertEqual((json.loads(params["query"]), params["limit"]), ({"_id": {"$in": [8, 9]}}, 2))
+        stored = KoboSubmission.objects.order_by("kobo_id").values_list("kobo_id", "kobo_uuid", "status", "national_id")
+        self.assertEqual(list(stored), [(8, "uuid-8", "RECEIVED", "AB12CD34"), (9, "uuid-9", "RECEIVED", "XY12AB34")])
+
+    def test_submissions_an_earlier_run_did_not_finish_are_retried_from_the_mis(self):
+        KoboSubmission.objects.create(source_type="kobo", asset_uid="aForm", kobo_id=3, data=_submission(3))
+        KoboSubmission.objects.create(source_type="kobo", asset_uid="aForm", kobo_id=4, status="HELD", data={})
+        source = KoboSubmissionSource("kobo")
+        with self._kobo([3, 4]) as get:
+            units = source.enumerate_units()
+            self.assertEqual([(u["unit_code"], u["stored"]) for u in units], [("retry 3-3", True)])
+            rows = source.fetch_unit(units[0])
+
+        self.assertEqual([row["_id"] for row in rows], [3])
+        self.assertEqual(get.call_count, 1)  # only the ids listing: a retry needs nothing from Kobo
 
     def test_reports_kobo_errors(self):
         source = KoboSubmissionSource("kobo")
@@ -301,6 +333,22 @@ class KoboRunsTestCase(TestCase):
         self.assertEqual((response.status_code, response.data["started"]), (202, True))
         self.assertEqual((again.status_code, again.data["started"]), (202, False))
         self.assertEqual(len(self.jobs), 1)
+
+    def test_the_webhook_secret_is_header_only_and_any_value_compares(self):
+        with patch.object(MsrEtlConfig, "sink_import_username", self.user.username):
+            request = APIRequestFactory().post("/api/msr_etl/kobo_webhook/kobo/?secret=hook-secret", {}, format="json")
+            self.assertEqual(kobo_webhook(request, source_type="kobo").status_code, 403)
+            self.assertEqual(self._hook("sécret-ü").status_code, 403)
+        self.assertEqual(self.jobs, [])
+
+    def test_a_run_not_heard_from_lately_no_longer_blocks_the_source(self):
+        kobo_runs.start_import("kobo", user=self.user)
+        AsyncJob.objects.filter(id=self.jobs[0].id).update(
+            status=AsyncJob.Status.RUNNING, updated_at=timezone.now() - timedelta(minutes=31))
+
+        kobo_runs.start_import("kobo", user=self.user)
+
+        self.assertEqual(len(self.jobs), 2)
 
 
 class KoboRealImportTestCase(TestCase):
