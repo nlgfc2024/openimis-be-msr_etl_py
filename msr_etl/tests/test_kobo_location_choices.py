@@ -1,7 +1,6 @@
 import hashlib
 import io
 import json
-import uuid
 from unittest.mock import MagicMock, call, patch
 
 from django.core.management import call_command
@@ -38,8 +37,11 @@ class KoboLocationChoicesTestCase(TestCase):
         Location.objects.create(code="9010101001", name="Area 1", type="V", parent=ward)
         self.files = choice_files(["901"])
 
-    def _kobo(self, media, version_id="v2", deployed="v2"):
-        replies = {"files/": {"results": media}, "": {"version_id": version_id, "deployed_version_id": deployed}}
+    def _kobo(self, media, version_id="v2", deployed="v2", active=True):
+        asset = {"version_id": version_id, "deployed_version_id": deployed}
+        if active is not None:
+            asset["deployment__active"] = active
+        replies = {"files/": {"results": media}, "": asset}
         get = patch.object(KoboSubmissionSource, "_get", side_effect=lambda params, path="data/": replies[path])
         request = patch.object(KoboSubmissionSource, "request")
         self.addCleanup(get.stop)
@@ -77,6 +79,23 @@ class KoboLocationChoicesTestCase(TestCase):
         self.assertEqual(json.loads(upload["data"]["metadata"]), {"filename": "wards.csv"})
         self.assertEqual(upload["files"]["content"][1], self.files["wards.csv"])
         self.assertEqual(request.call_args_list[3].kwargs["json"], {"active": True, "version_id": "v2"})
+
+    def test_a_closed_form_stays_closed_when_it_gets_new_lists(self):
+        request = self._kobo([], active=False)
+
+        result = push_location_choices("kobo")
+
+        self.assertTrue(result["redeployed"])
+        self.assertEqual(request.call_args_list[-1].kwargs["json"], {"active": False, "version_id": "v2"})
+
+    def test_a_form_whose_state_kobo_does_not_give_is_not_redeployed(self):
+        request = self._kobo([], active=None)
+
+        result = push_location_choices("kobo")
+
+        self.assertFalse(result["redeployed"])
+        self.assertIn("whether the form is open", result["warning"])
+        self.assertNotIn("PATCH", [c.args[0] for c in request.call_args_list])
 
     def test_a_form_with_undeployed_changes_is_not_redeployed(self):
         request = self._kobo([], version_id="draft", deployed="v2")
