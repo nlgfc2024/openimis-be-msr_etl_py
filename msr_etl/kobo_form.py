@@ -126,14 +126,26 @@ def store_form(source_type, asset_uid, form):
 
 
 def form_for_submission(submission):
-    """The form a submission was filled in on (its __version__), else the latest one stored."""
+    """The form version a submission was filled in on (its __version__), or None if it isn't stored: another
+    version's labels could be wrong for it and miss its questions."""
     from msr_etl.models import KoboFormVersion
 
-    versions = KoboFormVersion.objects.filter(source_type=submission.source_type, asset_uid=submission.asset_uid)
     version_uid = str((submission.data or {}).get("__version__") or "")
-    found = versions.filter(version_uid=version_uid).first() if version_uid else None
-    found = found or versions.order_by("-created_at").first()
+    if not version_uid:
+        return None
+    found = KoboFormVersion.objects.filter(source_type=submission.source_type, asset_uid=submission.asset_uid,
+                                           version_uid=version_uid).first()
     return found.form if found else None
+
+
+UNKNOWN_FORM_LABEL = "Answers as sent (the form version they were filled in on is not stored)"
+
+
+def raw_answers(submission):
+    """The answers without a form: field names and values as Kobo sent them, in one section."""
+    fields = [{"name": name, "label": name, "value": str(value)}
+              for name, value in sorted(_answers(submission).items()) if value not in (None, "")]
+    return [{"label": UNKNOWN_FORM_LABEL, "fields": fields}] if fields else []
 
 
 # Location level of each choice file the form reads
@@ -142,7 +154,7 @@ _LOCATION_FILES = {"cities.csv": "R", "wards.csv": "W", "neighbourhoods.csv": "V
 
 def _answers(submission):
     return {key.split("/")[-1]: value for key, value in (submission.data or {}).items()
-            if not key.startswith("_") and key not in ("__version__",)}
+            if not key.startswith(("_", "formhub/", "meta/"))}
 
 
 def application_sections(submission, form):
