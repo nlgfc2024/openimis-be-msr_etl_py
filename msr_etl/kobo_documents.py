@@ -3,12 +3,16 @@ Applicant documents: the files attached to Kobo submissions, copied into the MIS
 attachments are registered when it is stored, whatever its outcome (held, no national ID...), then downloaded by a
 separate job, since Kobo is switched off after the application period. Nothing is overwritten or deleted.
 """
+import csv
+import datetime
 import hashlib
+import io
 import logging
 import os
 import re
 import tempfile
 
+import openpyxl
 from django.core.files import File
 from django.core.files.storage import default_storage
 from django.db.models import F, Q
@@ -22,6 +26,9 @@ logger = logging.getLogger(__name__)
 _CHUNK = 1024 * 1024
 # Shown in the browser; anything else is downloaded
 INLINE_MIMETYPES = {"application/pdf", "image/png", "image/jpeg", "image/gif", "image/webp"}
+# Shown in the page as a table (read on request; the stored file is kept as sent)
+TABLE_MIMETYPES = {"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "text/csv"}
+TABLE_MAX_ROWS, TABLE_MAX_COLUMNS, TABLE_MAX_BYTES = 1000, 50, 20 * 1024 * 1024
 
 
 def register_documents(source_type, asset_uid, rows):
@@ -96,6 +103,61 @@ def download_document(kobo, document):
         mimetype=document.mimetype or response.headers.get("Content-Type", "").split(";")[0],
         error="", stored_at=timezone.now(), updated_at=timezone.now(),
     )
+
+
+class TableError(Exception):
+    pass
+
+
+def read_table(document):
+    """A stored spreadsheet's sheets as rows of text, for showing in the page; capped at TABLE_MAX_ROWS rows and
+    TABLE_MAX_COLUMNS columns per sheet. The stored file is left as it is."""
+    if document.mimetype not in TABLE_MIMETYPES:
+        raise TableError("This type of file can't be shown as a table")
+    if (document.size or 0) > TABLE_MAX_BYTES:
+        raise TableError("The file is too large to be shown as a table")
+    with default_storage.open(document.storage_path, "rb") as handle:
+        if document.mimetype == "text/csv":
+            text = io.TextIOWrapper(handle, encoding="utf-8-sig", errors="replace")
+            return [_sheet("", csv.reader(text))]
+        try:
+            # openpyxl parses with defusedxml when it is installed
+            workbook = openpyxl.load_workbook(handle, read_only=True, data_only=True)
+        except Exception as exc:
+            raise TableError("The file could not be read as a spreadsheet") from exc
+        try:
+            return [_sheet(sheet.title, sheet.iter_rows(values_only=True))
+                    for sheet in workbook.worksheets if sheet.sheet_state == "visible"]
+        finally:
+            workbook.close()
+
+
+def _sheet(name, rows):
+    cells, truncated = [], False
+    for number, row in enumerate(rows):
+        if number >= TABLE_MAX_ROWS:
+            truncated = True
+            break
+        truncated = truncated or len(row) > TABLE_MAX_COLUMNS
+        cells.append([_text(value) for value in row[:TABLE_MAX_COLUMNS]])
+    # Blank rows and columns around the content are dropped; blank rows inside it are kept (unfilled template rows)
+    while cells and not any(cells[-1]):
+        cells.pop()
+    while cells and not any(cells[0]):
+        cells.pop(0)
+    width = max((max((i + 1 for i, value in enumerate(row) if value), default=0) for row in cells), default=0)
+    first = min((next(i for i, value in enumerate(row) if value) for row in cells if any(row)), default=0)
+    return {"name": name, "rows": [(row + [""] * width)[first:width] for row in cells], "truncated": truncated}
+
+
+def _text(value):
+    if value is None:
+        return ""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    if isinstance(value, datetime.datetime) and value.time() == datetime.time():
+        return value.date().isoformat()
+    return str(value)
 
 
 def record_failure(document, error):
