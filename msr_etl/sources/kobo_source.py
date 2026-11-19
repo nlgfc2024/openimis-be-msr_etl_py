@@ -9,7 +9,9 @@ from msr_etl.auth_provider import get_auth_provider
 from msr_etl.kobo_form import normalise_form, store_form
 from msr_etl.models import KoboFormVersion, KoboSubmission, MsrEtlSyncUnit
 from msr_etl.sources.base import StagedDataSource
-from msr_etl.sources.http import create_retry_session, get_int_config, get_user_agent_header, get_with_resilience
+from msr_etl.sources.http import (
+    create_retry_session, get_int_config, get_user_agent_header, get_with_resilience, send_with_resilience,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +63,16 @@ class KoboSubmissionSource(StagedDataSource):
             **get_user_agent_header(self.source_type),
             **self.auth_provider.get_auth_header(),
         }
+
+    def request(self, method, path, expected=(200,), **kwargs):
+        """A call to this form's API (e.g. "DELETE", "files/<uid>/"); anything but an expected status is an error."""
+        url = f"{self.base_url}/api/v2/assets/{self.asset_uid}/{path}"
+        send = getattr(create_retry_session(self.source_type), method.lower())
+        response = send_with_resilience(self.source_type, send, url, self._headers(), **kwargs)
+        if response.status_code not in expected:
+            raise self.Error(f"Kobo returned {response.status_code} for {method} {path or 'the form'}: "
+                             f"{response.text[:300]}")
+        return response
 
     def _get(self, params, path="data/"):
         url = f"{self.base_url}/api/v2/assets/{self.asset_uid}/{path}"

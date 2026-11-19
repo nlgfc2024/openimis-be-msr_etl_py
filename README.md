@@ -247,7 +247,15 @@ Names are required; codes may be blank. A column that looks like a misspelt one 
 | `city_codes` | Temporary codes for cities given without one, by name |
 | `location_levels` | The file's levels, top first: `[{"type", "code_column", "name_column", "code_digits"}]`. Defaults to the four above, with 2, 2 and 3 digits below the city |
 
-**Kobo dropdowns**: `python manage.py export_kobo_location_choices --out <dir> [--cities <code> ...]` writes `cities.csv` (`name,label`), `wards.csv` (`name,label,city`) and `neighbourhoods.csv` (`name,label,city,ward,location_name`) from the MIS locations, for the Kobo form's `select_one_from_file` questions. Run it again after each location import.
+**Kobo dropdowns**: the MIS is the only source of locations, and a Kobo form's `select_one_from_file` questions get a copy of its lists: `cities.csv` (`name,label`), `wards.csv` (`name,label,city`) and `neighbourhoods.csv` (`name,label,city,ward,location_name`).
+
+- **Automatic**: a Kobo source with `"push_location_choices": true` gets the lists after every location list import, as a `kobo_location_choices_push` job.
+  - A file whose content Kobo already has is left alone. A changed one replaces the form's media file of that name, and the form is redeployed so it serves the new list. The redeploy keeps the form as it is: a form closed to submissions stays closed.
+  - A form with changes that aren't deployed yet is not redeployed, because a redeploy would publish those changes too. The job ends partial and says so; redeploy the form in Kobo.
+  - An hourly check pushes again to a form that is behind the lists, e.g. if Kobo was unreachable after an import.
+  - `location_choice_cities` limits a form to some cities (default: all).
+  - Replacing media and redeploying needs edit rights on the form. `location_choices_auth_token` gives the push its own token, so the import's `auth_token` can stay read-only; without it the push uses `auth_token`.
+- **By hand**: `python manage.py export_kobo_location_choices --push <source_type>` does the same now. `--out <dir> [--cities <code> ...]` only writes the files.
 
 ### Applications from a Kobo form (`kobo`)
 

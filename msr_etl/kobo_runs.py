@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 KOBO_CONNECTOR = "kobo"
 IMPORT_TASK = "msr_etl.jobs.run_ubr_individuals_import"
 IMPORT_JOB_TYPE = "ubr_individuals_import"
+CHOICES_TASK = "msr_etl.jobs.run_kobo_location_choices_push"
+CHOICES_JOB_TYPE = "kobo_location_choices_push"
 # A claim older than this is from a starter that died before recording its job
 CLAIM_TIMEOUT = timedelta(minutes=5)
 
@@ -35,6 +37,12 @@ def start_import(source_type, user=None, client_mutation_id=None):
     Raises ImportAlreadyRunning otherwise."""
     return _start_exclusive(source_type, IMPORT_TASK, IMPORT_JOB_TYPE, {"source_type": source_type},
                             user=user, client_mutation_id=client_mutation_id)
+
+
+def start_location_choices_push(source_type, user=None):
+    """Start a job that puts the MIS location lists into a Kobo form, unless one is already running."""
+    return _start_exclusive(f"{source_type}:location_choices", CHOICES_TASK, CHOICES_JOB_TYPE,
+                            {"source_type": source_type}, user=user)
 
 
 def _start_exclusive(lock_key, task, job_type, params, user=None, client_mutation_id=None):
@@ -102,3 +110,36 @@ def _import_user():
     if user is None:
         raise ValueError("Scheduled and webhook imports run as sink_import_username, which is not set or not found")
     return user
+
+
+def location_choice_sources():
+    """Kobo sources whose form gets the MIS location lists ("push_location_choices": true)."""
+    return [source_type for source_type in kobo_source_types()
+            if MsrEtlConfig.get_source_config(source_type).get("push_location_choices") is True]
+
+
+def start_location_choices_pushes(user=None):
+    """Start a push for every such source; one already running is left to finish. Returns the jobs started."""
+    started = []
+    for source_type in location_choice_sources():
+        try:
+            started.append(start_location_choices_push(source_type, user=user))
+        except ImportAlreadyRunning:
+            logger.debug("Location choices push to '%s' still running", source_type)
+        except Exception:
+            logger.exception("Could not start the location choices push to '%s'", source_type)
+    return started
+
+
+def check_location_choices():
+    """Scheduler backstop: push the lists to a form that is behind them (e.g. Kobo was down after an import)."""
+    from msr_etl.kobo_location_choices import choices_out_of_date
+
+    for source_type in location_choice_sources():
+        try:
+            if choices_out_of_date(source_type):
+                start_location_choices_push(source_type)
+        except ImportAlreadyRunning:
+            continue
+        except Exception:
+            logger.exception("Could not check the location lists of Kobo source '%s'", source_type)

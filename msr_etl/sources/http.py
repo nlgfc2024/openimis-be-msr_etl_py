@@ -121,6 +121,11 @@ def get_with_resilience(source_type, session, url, headers, **kwargs):
     return _send(source_type, session.get, url, headers, **kwargs)
 
 
+def send_with_resilience(source_type, send, url, headers, **kwargs):
+    """Any request (send is e.g. session.delete) with the source's timeout, TLS checks and errors."""
+    return _send(source_type, send, url, headers, **kwargs)
+
+
 def _send(source_type, send, url, headers, **kwargs):
     try:
         return send(
