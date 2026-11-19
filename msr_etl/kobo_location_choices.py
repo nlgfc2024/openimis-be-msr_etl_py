@@ -143,8 +143,15 @@ def push_location_choices(source_type):
                              "redeploy it in Kobo to serve the new location lists")
         logger.warning("Kobo form %s: %s", kobo.asset_uid, result["warning"])
         return result
+    # As it is: a redeploy must not reopen a form closed to submissions
+    active = asset.get("deployment__active")
+    if not isinstance(active, bool):
+        result["warning"] = ("Kobo didn't say whether the form is open, so it was not redeployed: "
+                             "redeploy it in Kobo to serve the new location lists")
+        logger.warning("Kobo form %s: %s", kobo.asset_uid, result["warning"])
+        return result
     kobo.request("PATCH", "deployment/", expected=(200,),
-                 json={"active": True, "version_id": asset["version_id"]})
+                 json={"active": active, "version_id": asset["version_id"]})
     result["redeployed"] = True
     logger.info("Kobo form %s redeployed with new %s", kobo.asset_uid, ", ".join(updated))
     return result
