@@ -12,8 +12,8 @@ from individual.models import Individual
 from location.models import Location
 from msr_etl.apps import MsrEtlConfig
 from msr_etl.kobo_form import (
-    application_sections, form_fields, form_for_submission, individual_schema, normalise_form, read_xlsform,
-    store_form,
+    application_sections, form_fields, form_for_submission, individual_schema, normalise_form, raw_answers,
+    read_xlsform, store_form,
 )
 from msr_etl.models import KoboFormVersion, KoboSubmission
 from msr_etl.schema import Query
@@ -113,8 +113,21 @@ class KoboFormStoreTestCase(TestCase):
         submission = KoboSubmission(source_type="kobo", asset_uid="aForm", kobo_id=1, data={"__version__": "vOld"})
 
         self.assertEqual(form_for_submission(submission), old.form)
+        # Another version's labels could be wrong for it, so no form rather than the latest
         submission.data = {"__version__": "unknown"}
-        self.assertEqual(form_for_submission(submission)["version"], "2026111827")
+        self.assertIsNone(form_for_submission(submission))
+
+    def test_without_its_form_version_a_submission_shows_its_raw_answers(self):
+        submission = KoboSubmission(source_type="kobo", asset_uid="aForm", kobo_id=1, data={
+            "__version__": "unknown", "_id": 1, "meta/instanceID": "uuid:1", "formhub/uuid": "f",
+            "applicant/first_name": "Grace", "enterprise/legal_form": "partnership_group", "credit/loan_use": "",
+        })
+
+        (section,) = raw_answers(submission)
+
+        self.assertIn("not stored", section["label"])
+        self.assertEqual([(f["name"], f["value"]) for f in section["fields"]],
+                         [("first_name", "Grace"), ("legal_form", "partnership_group")])
 
 
 @patch.object(MsrEtlConfig, "sources", SOURCES)
@@ -125,7 +138,8 @@ class KoboApplicationViewTestCase(TestCase):
         city = Location.objects.create(code="901", name="Test City", type="R")
         constituency = Location.objects.create(code="90101", name="Central", type="D", parent=city)
         Location.objects.create(code="9010101", name="Ward A", type="W", parent=constituency)
-        store_form("kobo", "aForm", read_xlsform(FORM_FILE))
+        # The version the submission below was sent with
+        store_form("kobo", "aForm", {**read_xlsform(FORM_FILE), "version_uid": "vX"})
         self.individual = Individual(first_name="Grace", last_name="Banda", dob="1995-04-02", json_ext={})
         self.individual.save(username=self.user.username)
         self.submission = KoboSubmission.objects.create(
@@ -165,6 +179,15 @@ class KoboApplicationViewTestCase(TestCase):
 
         self.assertEqual([(a.kobo_id, a.status, a.form_version) for a in applications], [(5, "IMPORTED", "2026111827")])
         self.assertTrue(applications[0].sections)
+
+    def test_an_application_without_its_form_version_shows_its_raw_answers(self):
+        self.submission.data = {**self.submission.data, "__version__": "vUnknown"}
+        self.submission.save()
+
+        (application,) = Query.resolve_kobo_applications(None, self._info(), individual_id=self.individual.id)
+
+        self.assertEqual(application.form_version, "")
+        self.assertIn("not stored", application.sections[0]["label"])
 
     def test_the_query_follows_the_individual_permissions(self):
         self.assertEqual(Query.resolve_kobo_applications(None, self._info(visible=False),
