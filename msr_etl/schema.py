@@ -14,6 +14,7 @@ from msr_etl.gql_queries import (
     MsrUbrLocationBatchGQLType,
     MsrUbrLocationsGQLType,
 )
+from msr_etl.kobo_documents import TABLE_MIMETYPES
 from msr_etl.kobo_form import application_sections, form_fields, form_for_submission, raw_answers
 from msr_etl.models import ApplicantDocument, KoboSubmission, MsrEtlSyncUnit
 from msr_etl.gql_mutations import (
@@ -231,12 +232,13 @@ class Query(graphene.ObjectType):
                 form = form_for_submission(submission)
                 labels[submission.id] = {f["name"]: f["label"] for f in form_fields(form)} if form else {}
             stored = document.status == ApplicantDocument.Status.STORED
+            url = f"msr_etl/individuals/{individual_id}/documents/{document.id}/" if can_open and stored else None
             documents.append(ApplicantDocumentGQLType(
                 id=str(document.id), kobo_id=submission.kobo_id, document_type=document.document_type,
                 label=labels[submission.id].get(document.document_type) or document.document_type,
                 filename=document.filename, mimetype=document.mimetype, size=document.size, status=document.status,
                 stored_at=document.stored_at, can_open=can_open and stored,
-                url=f"msr_etl/individuals/{individual_id}/documents/{document.id}/" if can_open and stored else None,
+                url=url, table_url=f"{url}table/" if url and document.mimetype in TABLE_MIMETYPES else None,
             ))
         return documents
 
