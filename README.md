@@ -253,7 +253,7 @@ Names are required; codes may be blank. A column that looks like a misspelt one 
 
 Imports the submissions of one KoboToolbox form as Individuals, e.g. Urban MEP applications. Individual imports only.
 
-- **What is new**: a run takes the submissions after the highest Kobo `_id` already stored (submissions aren't edited once sent). Units are pages of them, counted when the run starts.
+- **What a run takes**: the submissions Kobo has and the MIS hasn't stored (compared by Kobo `_id`, listed ids-only), plus stored ones still `RECEIVED`, i.e. an earlier run failed on them. So nothing is skipped for good: a page that fails is fetched by the next run. Units are up to `page_size` submissions.
 - **Kept for good**: every submission pulled is stored in `KoboSubmission` with its raw answers, its outcome and the Individual it created, updated or was held from.
 - **Answers**: each answer goes under its field name without the group path (`applicant/first_name` → `first_name`). The national ID is upper-cased without spaces, `location_code` is mapped through `current_location_code()` and given the MIS name, and `kobo_uuid` and `submission_time` are added. A submission without a national ID, name or date of birth, or with a location the MIS doesn't have, is not imported; its `KoboSubmission` says why.
 - **Only declared answers are imported**: the individual import refuses columns its `individual_schema` doesn't declare, so other answers stay on the `KoboSubmission` only. The sink refuses to start if a match field isn't in the schema, since then every repeat application would be held.
@@ -262,8 +262,8 @@ Imports the submissions of one KoboToolbox form as Individuals, e.g. Urban MEP a
   - in the MIS with the same `match_fields` (default first name, surname, date of birth and sex; case and extra spaces ignored): the record is updated;
   - in the MIS with any of them different: **held**, with the differences, and the record is left as it is.
   Applications with the same national ID in one run are handled in order, so a repeat is compared with the record the first one created.
-- **One run at a time** per source: the schedule, the webhook and Pull Data all start runs through a lock (`MsrEtlSourceRun`), so two runs can't create the same applicant twice.
-- **When it runs**: every `kobo_import_interval_minutes` (module setting, default 15; `"scheduled": false` turns it off for a source), on Pull Data, and when Kobo calls `POST /api/msr_etl/kobo_webhook/<source_type>/` with the `X-Webhook-Secret` header (or `?secret=`). The webhook only starts a run, and is off without a `webhook_secret`. Scheduled and webhook runs run as `sink_import_username`.
+- **One run at a time** per source: the schedule, the webhook and Pull Data all start runs through a lock (`MsrEtlSourceRun`), so two runs can't create the same applicant twice. A run not heard from for `kobo_run_stale_minutes` (module setting, default 30) no longer holds it, so a dead worker doesn't block the source.
+- **When it runs**: every `kobo_import_interval_minutes` (module setting, default 15; `"scheduled": false` turns it off for a source), on Pull Data, and when Kobo calls `POST /api/msr_etl/kobo_webhook/<source_type>/` with the `X-Webhook-Secret` header (only the header, so the secret stays out of proxy logs). The webhook only starts a run, and is off without a `webhook_secret`. Scheduled and webhook runs run as `sink_import_username`.
 
 ```json
 "kobo": {
