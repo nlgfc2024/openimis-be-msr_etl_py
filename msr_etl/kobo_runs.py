@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 KOBO_CONNECTOR = "kobo"
 IMPORT_TASK = "msr_etl.jobs.run_ubr_individuals_import"
 IMPORT_JOB_TYPE = "ubr_individuals_import"
+DOCUMENTS_TASK = "msr_etl.jobs.run_kobo_documents_download"
+DOCUMENTS_JOB_TYPE = "kobo_documents_download"
 CHOICES_TASK = "msr_etl.jobs.run_kobo_location_choices_push"
 CHOICES_JOB_TYPE = "kobo_location_choices_push"
 # A claim older than this is from a starter that died before recording its job
@@ -37,6 +39,28 @@ def start_import(source_type, user=None, client_mutation_id=None):
     Raises ImportAlreadyRunning otherwise."""
     return _start_exclusive(source_type, IMPORT_TASK, IMPORT_JOB_TYPE, {"source_type": source_type},
                             user=user, client_mutation_id=client_mutation_id)
+
+
+def start_documents_download(source_type, user=None):
+    """Start a job copying a source's applicant documents, unless one is already running."""
+    return _start_exclusive(f"{source_type}:documents", DOCUMENTS_TASK, DOCUMENTS_JOB_TYPE,
+                            {"source_type": source_type}, user=user)
+
+
+def start_documents_downloads(source_types, user=None):
+    """A download for every source with documents to fetch; one already running is left to finish."""
+    from msr_etl.kobo_documents import to_download
+
+    started = []
+    for source_type in source_types:
+        try:
+            if to_download(source_type).exists():
+                started.append(start_documents_download(source_type, user=user))
+        except ImportAlreadyRunning:
+            logger.debug("Document download for '%s' still running", source_type)
+        except Exception:
+            logger.exception("Could not start the document download for '%s'", source_type)
+    return started
 
 
 def start_location_choices_push(source_type, user=None):
@@ -96,6 +120,8 @@ def start_scheduled_kobo_imports():
             logger.debug("Kobo import from '%s' still running; not starting another", source_type)
         except Exception:
             logger.exception("Could not start the scheduled Kobo import from '%s'", source_type)
+    # Documents left over (e.g. Kobo failed on them) are retried on each tick, whatever the imports do
+    start_documents_downloads(kobo_source_types())
 
 
 def webhook_secret_matches(source_type, given):
