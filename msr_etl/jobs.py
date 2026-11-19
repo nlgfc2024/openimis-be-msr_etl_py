@@ -1,3 +1,5 @@
+import logging
+
 from msr_etl.models import MsrEtlSyncUnit
 from msr_etl.services import UBRIndividualService, UBRLocationService
 from msr_etl.source_registry import get_connector
@@ -10,11 +12,44 @@ from msr_etl.staging import (
 )
 
 LOCATION_FILE_CONNECTOR = "excel_locations"
+KOBO_CONNECTOR = "kobo"
+
+logger = logging.getLogger(__name__)
 
 
 def run_ubr_individuals_import(reporter, **params):
     source = UBRIndividualService(reporter.job.user, **params).source
     _run_staged_import(reporter, source, MsrEtlSyncUnit.Kind.INDIVIDUAL)
+    if get_connector(source.source_type) == KOBO_CONNECTOR:
+        # Their files follow at once, in their own job, so a slow download never holds the import
+        from msr_etl.kobo_runs import start_documents_downloads
+
+        start_documents_downloads([source.source_type], user=reporter.job.user)
+
+
+def run_kobo_documents_download(reporter, source_type):
+    """Copy the applicant documents not stored yet from Kobo into the MIS file storage."""
+    from msr_etl.kobo_documents import download_document, record_failure, to_download
+    from msr_etl.sources import KoboSubmissionSource
+
+    documents = list(to_download(source_type))
+    reporter.set_total(len(documents))
+    reporter.message("Copying applicant documents from Kobo...")
+    kobo, failed = KoboSubmissionSource(source_type), 0
+    for document in documents:
+        try:
+            download_document(kobo, document)
+            reporter.advance(k=1, stored=1)
+        except Exception as exc:
+            logger.warning("Could not store document %s (%s): %s", document.id, document.document_type, exc)
+            record_failure(document, exc)
+            failed += 1
+            reporter.advance(k=1, errors=1)
+    reporter.message(None)
+    if failed:
+        reporter.partial(error=f"{failed} documents could not be copied; they are retried on the next runs")
+    else:
+        reporter.succeed()
 
 
 def run_ubr_locations_import(reporter, **params):
