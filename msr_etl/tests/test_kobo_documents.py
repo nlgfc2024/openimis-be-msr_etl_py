@@ -1,8 +1,10 @@
 import hashlib
+import io
 import shutil
 import tempfile
 from unittest.mock import MagicMock, patch
 
+import openpyxl
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from django.test import TestCase, override_settings
@@ -20,9 +22,26 @@ from msr_etl.schema import Query
 from msr_etl.sources import KoboSubmissionSource
 from msr_etl.tests.test_kobo import SOURCES, _submission
 from msr_etl.tests.test_kobo_form import FORM_FILE
-from msr_etl.views import applicant_document
+from msr_etl.views import applicant_document, applicant_document_table
 
-PDF, XLSX = b"%PDF-1.4 statement", b"PK\x03\x04 template"
+
+def _workbook():
+    """A filled-in template: a blank row above, a header, figures, and a hidden sheet."""
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Sheet1"
+    sheet.append([])
+    sheet.append([None, "ASSET", "ESTIMATED VALUE (MWK)"])
+    sheet.append([None, "Sewing machine", 250000.0])
+    sheet.append([None, None, None])
+    sheet.append([None, "Generator", 1250000.5])
+    workbook.create_sheet("Lists").sheet_state = "hidden"
+    content = io.BytesIO()
+    workbook.save(content)
+    return content.getvalue()
+
+
+PDF, XLSX = b"%PDF-1.4 statement", _workbook()
 
 
 def _attachment(uid, question, name, mimetype, deleted=False):
@@ -197,14 +216,13 @@ class ApplicantDocumentAccessTestCase(_StorageTestCase):
         self.statement = ApplicantDocument.objects.get(document_type="doc_bank_statement")
         self.template = ApplicantDocument.objects.get(document_type="performance_template")
 
-    def _open(self, document, individual_id=None, allowed=True, visible=True):
+    def _open(self, document, individual_id=None, allowed=True, visible=True, view=applicant_document):
         request = APIRequestFactory().get("/api/msr_etl/individuals/x/documents/y/")
         force_authenticate(request, user=self.user)
         visible_individuals = Individual.objects.all() if visible else Individual.objects.none()
         with patch.object(type(self.user), "has_perms", return_value=allowed), \
                 patch.object(Individual, "get_queryset", return_value=visible_individuals):
-            return applicant_document(request, individual_id=individual_id or self.individual.id,
-                                      document_id=document.id)
+            return view(request, individual_id=individual_id or self.individual.id, document_id=document.id)
 
     def test_a_pdf_opens_in_the_browser_and_the_opening_is_logged(self):
         response = self._open(self.statement)
@@ -221,6 +239,31 @@ class ApplicantDocumentAccessTestCase(_StorageTestCase):
 
         self.assertTrue(response["Content-Disposition"].startswith("attachment"))
         self.assertIn("performance.xlsx", response["Content-Disposition"])
+
+    def test_a_spreadsheet_is_shown_as_its_rows_and_the_showing_is_logged(self):
+        response = self._open(self.template, view=applicant_document_table)
+
+        self.assertEqual(response.status_code, 200)
+        # The blank row and column around the content go; the blank row inside it stays; hidden sheets aren't shown
+        self.assertEqual(response.data["sheets"], [{"name": "Sheet1", "truncated": False, "rows": [
+            ["ASSET", "ESTIMATED VALUE (MWK)"], ["Sewing machine", "250000"], ["", ""], ["Generator", "1250000.5"],
+        ]}])
+        self.assertEqual(list(ApplicantDocumentAccess.objects.values_list("disposition", flat=True)), ["table"])
+
+    def test_only_spreadsheets_are_shown_as_tables(self):
+        response = self._open(self.statement, view=applicant_document_table)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(ApplicantDocumentAccess.objects.exists())
+
+    def test_a_table_follows_the_same_right_and_individual(self):
+        other = Individual(first_name="Other", last_name="Person", dob="1990-01-01", json_ext={})
+        other.save(username=self.user.username)
+
+        self.assertEqual(self._open(self.template, allowed=False, view=applicant_document_table).status_code, 403)
+        self.assertEqual(self._open(self.template, individual_id=other.id, view=applicant_document_table).status_code,
+                         404)
+        self.assertFalse(ApplicantDocumentAccess.objects.exists())
 
     def test_only_the_document_right_opens_documents(self):
         self.assertEqual(self._open(self.statement, allowed=False).status_code, 403)
@@ -251,3 +294,6 @@ class ApplicantDocumentAccessTestCase(_StorageTestCase):
         self.assertEqual(statement.label, "Latest Business Bank Statement, last 3 months (PDF)")
         self.assertTrue(statement.can_open)
         self.assertEqual(statement.url, f"msr_etl/individuals/{self.individual.id}/documents/{self.statement.id}/")
+        self.assertIsNone(statement.table_url)
+        template = documents["performance_template"]
+        self.assertEqual(template.table_url, f"msr_etl/individuals/{self.individual.id}/documents/{self.template.id}/table/")
