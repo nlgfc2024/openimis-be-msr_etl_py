@@ -1,5 +1,6 @@
 import uuid
 
+from django.conf import settings
 from django.db import models
 
 
@@ -163,3 +164,55 @@ class KoboFormVersion(models.Model):
         db_table = "msr_etl_kobo_form_version"
         constraints = [models.UniqueConstraint(fields=["source_type", "asset_uid", "version_uid", "version"],
                                                name="msr_etl_kobo_form_version_unique")]
+
+
+class ApplicantDocument(models.Model):
+    """
+    A file an applicant attached in Kobo, copied into the MIS file storage. Kobo runs for a limited time, so
+    every attachment is kept, whatever the submission's outcome; nothing is ever deleted. The row is the
+    download queue too: PENDING until stored, FAILED (retried up to kobo_document_max_attempts) on errors.
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        STORED = "STORED", "Stored"
+        FAILED = "FAILED", "Failed"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    submission = models.ForeignKey(KoboSubmission, on_delete=models.PROTECT, related_name="documents")
+    individual = models.ForeignKey("individual.Individual", null=True, blank=True, on_delete=models.SET_NULL,
+                                   related_name="+")
+    # The Kobo reference (with the submission's form and _id), not Kobo's URL
+    kobo_attachment_uid = models.CharField(max_length=64)
+    question = models.CharField(max_length=255, blank=True, default="")
+    document_type = models.CharField(max_length=128, blank=True, default="")
+    filename = models.CharField(max_length=255, blank=True, default="")
+    mimetype = models.CharField(max_length=128, blank=True, default="")
+    size = models.BigIntegerField(null=True, blank=True)
+    sha256 = models.CharField(max_length=64, blank=True, default="")
+    storage_path = models.CharField(max_length=500, blank=True, default="")
+    status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING, db_index=True)
+    attempts = models.IntegerField(default=0)
+    error = models.TextField(blank=True, default="")
+    stored_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "msr_etl_applicant_document"
+        constraints = [models.UniqueConstraint(fields=["submission", "kobo_attachment_uid"],
+                                               name="msr_etl_applicant_document_unique")]
+
+
+class ApplicantDocumentAccess(models.Model):
+    """Every opening of an applicant document: national IDs and bank statements are sensitive."""
+    id = models.BigAutoField(primary_key=True)
+    document = models.ForeignKey(ApplicantDocument, on_delete=models.PROTECT, related_name="accesses")
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL, related_name="+")
+    username = models.CharField(max_length=255, blank=True, default="")
+    # inline (shown in the browser) or attachment (downloaded)
+    disposition = models.CharField(max_length=16)
+    accessed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "msr_etl_applicant_document_access"
