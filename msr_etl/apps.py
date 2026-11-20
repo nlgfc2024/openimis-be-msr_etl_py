@@ -30,6 +30,8 @@ DEFAULT_CONFIG = {
     "kobo_table_max_columns": 50,
     "kobo_table_max_bytes": 20 * 1024 * 1024,
     "applicant_document_perms": ["953003"],
+    # Reviewing Kobo submissions (held ones, no national ID...): personal data, give it to reviewers only
+    "kobo_submission_perms": ["953004"],
     "sources": {
         "ubr": {
             "connector": "msr_api",
@@ -124,6 +126,7 @@ class MsrEtlConfig(AppConfig):
     kobo_table_max_columns = None
     kobo_table_max_bytes = None
     applicant_document_perms = None
+    kobo_submission_perms = None
 
     sources = None
 
