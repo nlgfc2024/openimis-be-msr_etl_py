@@ -4,18 +4,24 @@ import shutil
 import tempfile
 from unittest.mock import MagicMock, patch
 
+import requests
+
 import openpyxl
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
+from django.core.management import call_command
 from django.test import TestCase, override_settings
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from core.models import AsyncJob
+from core.services.asyncJobServices import JobCancelled
 from core.test_helpers import LogInHelper
 from individual.models import Individual
 from msr_etl import jobs, kobo_runs
 from msr_etl.apps import MsrEtlConfig
-from msr_etl.kobo_documents import download_document, record_failure, register_documents, storage_path, to_download
+from msr_etl.kobo_documents import (
+    DocumentError, download_document, read_table, record_failure, register_documents, storage_path, to_download,
+)
 from msr_etl.kobo_form import read_xlsform, store_form
 from msr_etl.models import ApplicantDocument, ApplicantDocumentAccess, KoboSubmission
 from msr_etl.schema import Query
@@ -57,6 +63,12 @@ def _with_attachments(kobo_id):
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
         _attachment("attOLD", "documents/doc_other", "replaced.pdf", "application/pdf", deleted=True),
     ])
+
+
+def _kobo_error(status_code):
+    error = KoboSubmissionSource.Error(f"Kobo returned {status_code}")
+    error.status_code = status_code
+    return error
 
 
 def _kobo_file(content, content_type="application/pdf"):
@@ -152,7 +164,8 @@ class RegisterAndDownloadTestCase(_StorageTestCase):
         def answer(method, path, **kwargs):
             uid = path.rstrip("/").split("/")[-1]
             if uid not in replies:
-                raise KoboSubmissionSource.Error("Kobo returned 500")
+                # Gone from Kobo: this document's problem
+                raise _kobo_error(404)
             return replies[uid]
 
         with patch.object(KoboSubmissionSource, "request", side_effect=answer):
@@ -161,6 +174,63 @@ class RegisterAndDownloadTestCase(_StorageTestCase):
         self.assertEqual(dict(ApplicantDocument.objects.values_list("document_type", "status")),
                          {"doc_bank_statement": "STORED", "performance_template": "FAILED"})
         reporter.partial.assert_called_once()
+
+    def _run(self, side_effect, reporter=None):
+        reporter = reporter or MagicMock()
+        with patch.object(KoboSubmissionSource, "request", side_effect=side_effect) as request:
+            jobs.run_kobo_documents_download(reporter, source_type="kobo")
+        return reporter, request
+
+    def test_kobo_being_down_stops_the_run_and_uses_no_attempt(self):
+        self._store()
+        connection_error = KoboSubmissionSource.Error("refused")
+        connection_error.__cause__ = requests.ConnectionError("refused")
+        for failure in (_kobo_error(503), _kobo_error(401), connection_error, requests.ConnectionError("reset")):
+            reporter, request = self._run(failure)
+
+            self.assertEqual(request.call_count, 1)
+            reporter.fail.assert_called_once()
+            self.assertEqual(set(ApplicantDocument.objects.values_list("status", "attempts")), {("PENDING", 0)})
+
+    def test_a_cancel_after_a_download_leaves_the_document_stored(self):
+        self._store()
+        reporter = MagicMock()
+        reporter.advance.side_effect = JobCancelled("cancelled")
+
+        with self.assertRaises(JobCancelled):
+            self._run(lambda method, path, **kwargs: _kobo_file(PDF), reporter=reporter)
+
+        statuses = sorted(ApplicantDocument.objects.values_list("status", flat=True))
+        self.assertEqual(statuses, ["PENDING", "STORED"])
+
+    def test_an_unexpected_attachment_uid_is_never_requested(self):
+        statement = self._store()["doc_bank_statement"]
+        statement.kobo_attachment_uid = "../x"
+        kobo = MagicMock()
+
+        with self.assertRaises(DocumentError):
+            download_document(kobo, statement)
+        kobo.request.assert_not_called()
+        self.assertNotIn("..", storage_path(statement))
+
+    def test_a_file_over_the_size_limit_is_refused(self):
+        statement = self._store()["doc_bank_statement"]
+        kobo = MagicMock()
+        kobo.request.return_value = _kobo_file(PDF)
+
+        with patch.object(MsrEtlConfig, "kobo_document_max_bytes", 5), self.assertRaises(DocumentError):
+            download_document(kobo, statement)
+        self.assertFalse(default_storage.exists(storage_path(statement)))
+
+    def test_used_up_documents_can_be_put_back_in_the_queue(self):
+        statement = self._store()["doc_bank_statement"]
+        with patch.object(MsrEtlConfig, "kobo_document_max_attempts", 1):
+            record_failure(statement, "Kobo returned 404")
+            self.assertNotIn(statement, to_download("kobo"))
+            call_command("kobo_documents_retry", source="kobo", stdout=io.StringIO())
+            self.assertIn(statement, to_download("kobo"))
+        statement.refresh_from_db()
+        self.assertEqual((statement.status, statement.attempts), ("PENDING", 0))
 
 
 class DocumentRunsTestCase(_StorageTestCase):
@@ -249,6 +319,13 @@ class ApplicantDocumentAccessTestCase(_StorageTestCase):
             ["ASSET", "ESTIMATED VALUE (MWK)"], ["Sewing machine", "250000"], ["", ""], ["Generator", "1250000.5"],
         ]}])
         self.assertEqual(list(ApplicantDocumentAccess.objects.values_list("disposition", flat=True)), ["table"])
+
+    def test_the_table_limits_come_from_the_configuration(self):
+        with patch.object(MsrEtlConfig, "kobo_table_max_rows", 2), \
+                patch.object(MsrEtlConfig, "kobo_table_max_columns", 2):
+            (sheet,) = read_table(self.template)
+
+        self.assertEqual((sheet["rows"], sheet["truncated"]), ([["ASSET"]], True))
 
     def test_only_spreadsheets_are_shown_as_tables(self):
         response = self._open(self.statement, view=applicant_document_table)
