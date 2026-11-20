@@ -309,6 +309,15 @@ Kobo is switched off after the application period, so every file applicants atta
 - **Table**: `GET /api/msr_etl/individuals/<individual id>/documents/<document id>/table/` gives a stored spreadsheet (`.xlsx` or CSV) as its visible sheets' rows of text, so the page can show it as a table. It is read on request with `openpyxl` (through `defusedxml`); the stored file is not changed. Blank rows and columns around the content are dropped, and each sheet is capped at `kobo_table_max_rows` rows and `kobo_table_max_columns` columns (default 1000 and 50; `truncated` says so). Files over `kobo_table_max_bytes` (default 20 MB), and other types, get a 400. The same right and Individual checks apply, and each showing is logged with the `table` disposition.
 - **List**: the `applicantDocuments(individualId)` query gives an Individual's documents with the form's question as label, status, size, and the URL to open each when the user has the right, plus a `tableUrl` for spreadsheets.
 
+#### Reviewing submissions
+
+The `koboSubmissions(sourceType, status, search, first, offset)` query lists Kobo submissions with their outcome, for the **Kobo applications** tab of the MSR ETL page.
+
+- **Right**: `kobo_submission_perms` (default `953004`; give it to reviewers only, as submissions hold personal data). None configured means no access. A submission linked to an Individual is listed only if the user may see that Individual (its location limits); one linked to none (no national ID, invalid) is listed to everyone with the right.
+- **List**: newest first, filtered by outcome (`status`) and `search` (any part of the national ID, or a Kobo id), up to 100 a page. Each has its national ID, applicant names, reason, and documents stored out of attached.
+- **Held**: a held submission comes with `comparison`, each match field (`match_fields`, default first name, last name, date of birth, sex) with its form label, the value in the MIS as the record is now, the value applied, and whether they differ (case and extra spaces ignored). It is the same comparison the import holds a submission on.
+- **Counts**: `summary` counts the submissions by outcome and their documents by status, over the search but not the outcome filter.
+
 #### The form in the MIS
 
 The Kobo form is kept as data, so the MIS can follow it without hand edits.
