@@ -49,6 +49,10 @@ class Command(BaseCommand):
     def _write(self, report, checksums):
         out = self.stdout.write
         out(f"== {report['source']} (Kobo form {report['asset_uid']})")
+        form_open = {True: "yes", False: "no", None: "unknown"}[report["form_open"]]
+        out(f"Form open in Kobo: {form_open}")
+        if report["form_open"] is not False:
+            out(self.style.WARNING("The form may still take submissions: close it in Kobo before the final check."))
         out(f"Submissions: {report['kobo_submissions']} in Kobo, {report['mis_submissions']} in the MIS")
         out("  " + ", ".join(f"{status} {count}" for status, count in report["outcomes"].items() if count))
         documents = ", ".join(f"{status} {count}" for status, count in report["documents"].items())
