@@ -48,13 +48,22 @@ class KoboSubmissionSource(StagedDataSource):
 
     def kobo_ids(self):
         """Every submission id the form has, oldest first (ids only, so one request covers many)."""
-        ids, start = [], 0
+        return [row["_id"] for row in self._every_row(["_id"])]
+
+    def attachment_uids(self):
+        """{submission id: uids of its attachments not deleted in Kobo}, for every submission of the form."""
+        return {row["_id"]: {str(a["uid"]) for a in (row.get("_attachments") or [])
+                             if a.get("uid") and not a.get("is_deleted")}
+                for row in self._every_row(["_id", "_attachments"])}
+
+    def _every_row(self, fields):
+        rows, start = [], 0
         while True:
-            results = self._get({"fields": json.dumps(["_id"]), "sort": json.dumps({"_id": 1}),
+            results = self._get({"fields": json.dumps(fields), "sort": json.dumps({"_id": 1}),
                                  "start": start, "limit": _MAX_PAGE_SIZE}).get("results") or []
-            ids.extend(row["_id"] for row in results if row.get("_id") is not None)
+            rows.extend(row for row in results if row.get("_id") is not None)
             if len(results) < _MAX_PAGE_SIZE:
-                return ids
+                return rows
             start += len(results)
 
     def _headers(self):
