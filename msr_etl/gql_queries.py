@@ -91,3 +91,28 @@ class ApplicantDocumentGQLType(graphene.ObjectType):
     # A spreadsheet's rows, for showing it in the page as a table
     table_url = graphene.String()
     can_open = graphene.Boolean()
+
+
+class KoboSubmissionGQLType(graphene.ObjectType):
+    """A Kobo submission and its outcome, for reviewing it."""
+    id = graphene.String()
+    source_type = graphene.String()
+    kobo_id = graphene.Int()
+    submitted_at = graphene.DateTime()
+    status = graphene.String()
+    reason = graphene.String()
+    national_id = graphene.String()
+    first_name = graphene.String()
+    last_name = graphene.String()
+    individual_id = graphene.String()
+    # Held only: [{"field", "label", "mis", "applied", "differs"}], the MIS side as the record is now
+    comparison = GenericScalar()
+    documents = graphene.Int()
+    documents_stored = graphene.Int()
+
+
+class KoboSubmissionsGQLType(graphene.ObjectType):
+    items = graphene.List(KoboSubmissionGQLType)
+    total_count = graphene.Int()
+    # {"submissions": {status: count}, "documents": {status: count}}, over the filtered sources and search
+    summary = GenericScalar()
