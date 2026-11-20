@@ -23,6 +23,12 @@ DEFAULT_CONFIG = {
     # and the right to open them (national IDs and bank statements: give it to document reviewers only)
     "kobo_documents_path": "kobo_documents",
     "kobo_document_max_attempts": 5,
+    # A larger attachment is refused rather than stored
+    "kobo_document_max_bytes": 100 * 1024 * 1024,
+    # A spreadsheet shown in the page as a table: rows and columns per sheet, and the largest file read
+    "kobo_table_max_rows": 1000,
+    "kobo_table_max_columns": 50,
+    "kobo_table_max_bytes": 20 * 1024 * 1024,
     "applicant_document_perms": ["953003"],
     "sources": {
         "ubr": {
@@ -113,6 +119,10 @@ class MsrEtlConfig(AppConfig):
     kobo_run_stale_minutes = None
     kobo_documents_path = None
     kobo_document_max_attempts = None
+    kobo_document_max_bytes = None
+    kobo_table_max_rows = None
+    kobo_table_max_columns = None
+    kobo_table_max_bytes = None
     applicant_document_perms = None
 
     sources = None
