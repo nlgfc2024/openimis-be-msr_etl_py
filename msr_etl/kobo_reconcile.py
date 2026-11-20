@@ -17,6 +17,7 @@ FIXES = {
     "not_stored": "Wait for the document download, or run manage.py kobo_documents_retry if they used up "
                   "their attempts.",
     "missing_files": "Registered as stored but not in the file storage: restore them from the backup.",
+    "wrong_size": "The stored file is empty or not the size downloaded: restore it from the backup.",
     "checksum_mismatch": "The stored file differs from what was downloaded: restore it from the backup.",
 }
 GAPS = tuple(FIXES)
@@ -34,6 +35,8 @@ def reconcile(source, checksums=False):
     report = {
         "source": source.source_type,
         "asset_uid": source.asset_uid,
+        # Still open, more may come after this check
+        "form_open": source.deployment_active(),
         "kobo_submissions": len(kobo_attachments),
         "mis_submissions": len(stored_ids),
         "outcomes": dict(sorted((status, stored.filter(status=status).count())
@@ -47,6 +50,7 @@ def reconcile(source, checksums=False):
         "not_stored": [_describe(d) for d in documents.exclude(status=ApplicantDocument.Status.STORED)
                        .order_by("submission__kobo_id", "kobo_attachment_uid")],
         "missing_files": [],
+        "wrong_size": [],
         "checksum_mismatch": [],
         # Kept in the MIS; Kobo no longer has them (deleted there), which is not a gap
         "not_in_kobo": sorted(stored_ids - set(kobo_attachments)),
@@ -54,6 +58,9 @@ def reconcile(source, checksums=False):
     for document in documents.filter(status=ApplicantDocument.Status.STORED).order_by("submission__kobo_id"):
         if not document.storage_path or not default_storage.exists(document.storage_path):
             report["missing_files"].append(_describe(document))
+        elif not document.size or default_storage.size(document.storage_path) != document.size:
+            # Cheap, so on every run: an empty or cut-short file isn't "present"
+            report["wrong_size"].append(_describe(document))
         elif checksums and _sha256(document.storage_path) != document.sha256:
             report["checksum_mismatch"].append(_describe(document))
     report["complete"] = not any(report[gap] for gap in GAPS)
