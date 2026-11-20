@@ -29,22 +29,35 @@ def run_ubr_individuals_import(reporter, **params):
 
 def run_kobo_documents_download(reporter, source_type):
     """Copy the applicant documents not stored yet from Kobo into the MIS file storage."""
-    from msr_etl.kobo_documents import download_document, record_failure, to_download
+    from msr_etl.kobo_documents import download_document, is_kobo_failure, record_failure, to_download
     from msr_etl.sources import KoboSubmissionSource
 
     documents = list(to_download(source_type))
     reporter.set_total(len(documents))
     reporter.message("Copying applicant documents from Kobo...")
-    kobo, failed = KoboSubmissionSource(source_type), 0
+    kobo, stored, failed = KoboSubmissionSource(source_type), 0, 0
     for document in documents:
         try:
             download_document(kobo, document)
-            reporter.advance(k=1, stored=1)
         except Exception as exc:
+            if is_kobo_failure(exc):
+                # Kobo down or refusing the token: stop, and count no attempt, so no document is given up on
+                logger.warning("Kobo failed while copying documents of '%s'; stopping: %s", source_type, exc)
+                reporter.message(None)
+                error = f"Kobo is not answering ({exc}). No document was counted as failed; the next run tries again"
+                if stored or failed:
+                    reporter.partial(error=error)
+                else:
+                    reporter.fail(error)
+                return
             logger.warning("Could not store document %s (%s): %s", document.id, document.document_type, exc)
             record_failure(document, exc)
             failed += 1
             reporter.advance(k=1, errors=1)
+            continue
+        stored += 1
+        # Outside the try: a cancel here stops the job and leaves the document stored
+        reporter.advance(k=1, stored=1)
     reporter.message(None)
     if failed:
         reporter.partial(error=f"{failed} documents could not be copied; they are retried on the next runs")
