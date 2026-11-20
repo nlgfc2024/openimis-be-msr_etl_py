@@ -72,8 +72,10 @@ class KoboSubmissionSource(StagedDataSource):
         send = getattr(create_retry_session(self.source_type), method.lower())
         response = send_with_resilience(self.source_type, send, url, {**self._headers(), **(headers or {})}, **kwargs)
         if response.status_code not in expected:
-            raise self.Error(f"Kobo returned {response.status_code} for {method} {path or 'the form'}: "
-                             f"{response.text[:300]}")
+            error = self.Error(f"Kobo returned {response.status_code} for {method} {path or 'the form'}: "
+                               f"{response.text[:300]}")
+            error.status_code = response.status_code
+            raise error
         return response
 
     def _get(self, params, path="data/"):
