@@ -13,6 +13,7 @@ import re
 import tempfile
 
 import openpyxl
+import requests
 from django.core.files import File
 from django.core.files.storage import default_storage
 from django.db.models import F, Q
@@ -28,7 +29,23 @@ _CHUNK = 1024 * 1024
 INLINE_MIMETYPES = {"application/pdf", "image/png", "image/jpeg", "image/gif", "image/webp"}
 # Shown in the page as a table (read on request; the stored file is kept as sent)
 TABLE_MIMETYPES = {"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "text/csv"}
-TABLE_MAX_ROWS, TABLE_MAX_COLUMNS, TABLE_MAX_BYTES = 1000, 50, 20 * 1024 * 1024
+_UID = re.compile(r"[A-Za-z0-9]+")
+
+
+class DocumentError(Exception):
+    """Something wrong with this one document: counted against its attempts."""
+
+
+def is_kobo_failure(exc):
+    """Kobo itself failing (unreachable, refusing the token, erroring), not the document: no attempt is counted."""
+    status = getattr(exc, "status_code", None)
+    if status is not None:
+        return status in (401, 403, 429) or status >= 500
+    return isinstance(exc, requests.RequestException) or isinstance(exc.__cause__, requests.RequestException)
+
+
+def _setting(name, default):
+    return int(getattr(MsrEtlConfig, name, None) or default)
 
 
 def register_documents(source_type, asset_uid, rows):
@@ -80,13 +97,17 @@ def storage_path(document):
     extension = os.path.splitext(document.filename)[1].lower()
     extension = extension if re.fullmatch(r"\.[a-z0-9]{1,8}", extension or "") else ""
     document_type = re.sub(r"[^A-Za-z0-9_-]", "_", document.document_type or "document")
-    return (f"{root}/{document.submission.source_type}/{document.submission.kobo_id}/"
-            f"{document_type}_{document.kobo_attachment_uid}{extension}")
+    uid = re.sub(r"[^A-Za-z0-9]", "_", document.kobo_attachment_uid)
+    return f"{root}/{document.submission.source_type}/{document.submission.kobo_id}/{document_type}_{uid}{extension}"
 
 
 def download_document(kobo, document):
-    """Fetch one document from Kobo and store it; raises on any failure (the caller records it)."""
+    """Fetch one document from Kobo and store it. Raises on any failure: DocumentError or a Kobo error with its
+    status for the caller to tell a bad document from Kobo being down (is_kobo_failure)."""
     submission = document.submission
+    if not _UID.fullmatch(document.kobo_attachment_uid or ""):
+        raise DocumentError(f"Unexpected Kobo attachment uid {document.kobo_attachment_uid!r}")
+    max_bytes = _setting("kobo_document_max_bytes", 100 * 1024 * 1024)
     response = kobo.request("GET", f"data/{submission.kobo_id}/attachments/{document.kobo_attachment_uid}/",
                             expected=(200,), headers={"Accept": "*/*"}, stream=True)
     digest, size = hashlib.sha256(), 0
@@ -94,6 +115,8 @@ def download_document(kobo, document):
         for chunk in response.iter_content(_CHUNK):
             digest.update(chunk)
             size += len(chunk)
+            if size > max_bytes:
+                raise DocumentError(f"Larger than kobo_document_max_bytes ({max_bytes} bytes)")
             buffer.write(chunk)
         buffer.seek(0)
         # save() picks a new name if the path is taken, so an existing file is never overwritten
@@ -110,11 +133,11 @@ class TableError(Exception):
 
 
 def read_table(document):
-    """A stored spreadsheet's sheets as rows of text, for showing in the page; capped at TABLE_MAX_ROWS rows and
-    TABLE_MAX_COLUMNS columns per sheet. The stored file is left as it is."""
+    """A stored spreadsheet's sheets as rows of text, for showing in the page; capped at kobo_table_max_rows rows
+    and kobo_table_max_columns columns per sheet. The stored file is left as it is."""
     if document.mimetype not in TABLE_MIMETYPES:
         raise TableError("This type of file can't be shown as a table")
-    if (document.size or 0) > TABLE_MAX_BYTES:
+    if (document.size or 0) > _setting("kobo_table_max_bytes", 20 * 1024 * 1024):
         raise TableError("The file is too large to be shown as a table")
     with default_storage.open(document.storage_path, "rb") as handle:
         if document.mimetype == "text/csv":
@@ -133,13 +156,14 @@ def read_table(document):
 
 
 def _sheet(name, rows):
+    max_rows, max_columns = _setting("kobo_table_max_rows", 1000), _setting("kobo_table_max_columns", 50)
     cells, truncated = [], False
     for number, row in enumerate(rows):
-        if number >= TABLE_MAX_ROWS:
+        if number >= max_rows:
             truncated = True
             break
-        truncated = truncated or len(row) > TABLE_MAX_COLUMNS
-        cells.append([_text(value) for value in row[:TABLE_MAX_COLUMNS]])
+        truncated = truncated or len(row) > max_columns
+        cells.append([_text(value) for value in row[:max_columns]])
     # Blank rows and columns around the content are dropped; blank rows inside it are kept (unfilled template rows)
     while cells and not any(cells[-1]):
         cells.pop()
@@ -165,3 +189,11 @@ def record_failure(document, error):
         status=ApplicantDocument.Status.FAILED, attempts=F("attempts") + 1, error=str(error)[:2000],
         updated_at=timezone.now(),
     )
+
+
+def requeue_failed(source_type=None):
+    """Put documents that used up their attempts back in the queue, with fresh attempts; returns how many."""
+    failed = ApplicantDocument.objects.filter(status=ApplicantDocument.Status.FAILED)
+    if source_type:
+        failed = failed.filter(submission__source_type=source_type)
+    return failed.update(status=ApplicantDocument.Status.PENDING, attempts=0, updated_at=timezone.now())
