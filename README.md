@@ -327,9 +327,10 @@ The `koboSubmissions(sourceType, status, search, first, offset)` query lists Kob
 - **unregistered**: an attachment of a stored submission with no `ApplicantDocument`.
 - **not stored**: documents pending or failed (wait for the download, or `kobo_documents_retry`).
 - **missing files**: stored documents whose file isn't in the file storage.
+- **wrong size**: a stored file that is empty or not the size downloaded (checked on every run).
 - **checksum mismatch** (with `--checksums`, which re-reads every file): a stored file that differs from what was downloaded.
 
-Submissions the MIS keeps that Kobo no longer has (deleted there) are counted, not treated as gaps. `--json` writes the full report, with every item rather than the first 50 of each gap.
+Kobo's submission list is paged until Kobo's own count is reached, and fewer rows than that is an error rather than a short list. The report says whether the form is still open in Kobo: close it before the final check, or more may arrive after it. Submissions the MIS keeps that Kobo no longer has (deleted there) are counted, not treated as gaps. `--json` writes the full report, with every item rather than the first 50 of each gap.
 
 #### The form in the MIS
 
