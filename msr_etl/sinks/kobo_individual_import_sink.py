@@ -7,6 +7,7 @@ from individual.data_source import DATA_SOURCE_FIELD, data_source_q
 from individual.models import Individual, IndividualDataSource
 
 from msr_etl.apps import MsrEtlConfig
+from msr_etl.kobo_documents import link_documents
 from msr_etl.models import KoboSubmission
 from msr_etl.sinks.individual_import_sink import IndividualImportSink
 
@@ -146,6 +147,8 @@ class KoboIndividualImportSink(IndividualImportSink):
         return errors
 
     def _mark(self, record, status, individual=None, reason=""):
-        KoboSubmission.objects.filter(
-            source_type=self.source_type, asset_uid=self.asset_uid, kobo_id=record.get("kobo_id"),
-        ).update(status=status, individual=individual, reason=reason)
+        submission = {"source_type": self.source_type, "asset_uid": self.asset_uid, "kobo_id": record.get("kobo_id")}
+        KoboSubmission.objects.filter(**submission).update(status=status, individual=individual, reason=reason)
+        # Its documents go with it: to the record it created or updated, or the one it was held from
+        if individual is not None:
+            link_documents(submission, individual)

@@ -72,3 +72,22 @@ class KoboApplicationGQLType(graphene.ObjectType):
     form_version = graphene.String()
     # [{"label", "fields": [{"name", "label", "value"}]}]
     sections = GenericScalar()
+
+
+class ApplicantDocumentGQLType(graphene.ObjectType):
+    """A file an applicant attached in Kobo, as the MIS holds it."""
+    id = graphene.String()
+    kobo_id = graphene.Int()
+    document_type = graphene.String()
+    # The form's question for it
+    label = graphene.String()
+    filename = graphene.String()
+    mimetype = graphene.String()
+    size = graphene.Int()
+    status = graphene.String()
+    stored_at = graphene.DateTime()
+    # Relative to the API root, for a user with the applicant document right
+    url = graphene.String()
+    # A spreadsheet's rows, for showing it in the page as a table
+    table_url = graphene.String()
+    can_open = graphene.Boolean()

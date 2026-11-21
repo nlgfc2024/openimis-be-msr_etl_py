@@ -1,5 +1,7 @@
 import logging
 
+from django.core.files.storage import default_storage
+from django.http import FileResponse, Http404
 from rest_framework import status
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -8,8 +10,9 @@ from rest_framework.response import Response
 from msr_etl import kobo_runs
 from msr_etl.apps import MsrEtlConfig
 from msr_etl.form_numbers import DEFAULT_FORM_NUMBER_COLUMN, FormNumberFileError, read_form_numbers
+from msr_etl.kobo_documents import INLINE_MIMETYPES, TableError, read_table
 from msr_etl.location_file import LocationFileError, read_location_file, resolve_location_codes
-from msr_etl.models import MsrEtlUpload
+from msr_etl.models import ApplicantDocument, ApplicantDocumentAccess, MsrEtlUpload
 from msr_etl.source_registry import source_enabled
 
 logger = logging.getLogger(__name__)
@@ -135,3 +138,65 @@ def kobo_webhook(request, source_type):
         # The running import, or the next one, picks the submission up
         return Response({"success": True, "started": False}, status=status.HTTP_202_ACCEPTED)
     return Response({"success": True, "started": True, "job_uuid": str(job_uuid)}, status=status.HTTP_202_ACCEPTED)
+
+
+class CanOpenApplicantDocuments(IsAuthenticated):
+    """The applicant document right (applicant_document_perms), read per request; none configured is no access."""
+
+    def has_permission(self, request, view):
+        rights = MsrEtlConfig.applicant_document_perms or []
+        return bool(rights) and super().has_permission(request, view) and request.user.has_perms(rights)
+
+
+def _visible_document(request, individual_id, document_id):
+    """A stored document, looked up through its individual, which the user must be allowed to see."""
+    from individual.models import Individual
+
+    document = ApplicantDocument.objects.filter(id=document_id, individual_id=individual_id,
+                                                status=ApplicantDocument.Status.STORED).first()
+    # The same answer for a document that isn't there and one the user may not see
+    if document is None or not Individual.get_queryset(None, request.user).filter(id=individual_id).exists():
+        raise Http404
+    return document
+
+
+@api_view(["GET"])
+@permission_classes([CanOpenApplicantDocuments])
+def applicant_document_table(request, individual_id, document_id):
+    """A stored spreadsheet's sheets as rows, for showing it in the page. Logged like an opening."""
+    document = _visible_document(request, individual_id, document_id)
+    try:
+        sheets = read_table(document)
+    except TableError as exc:
+        return Response({"success": False, "error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+    except (FileNotFoundError, OSError):
+        logger.error("Applicant document %s is registered but missing from storage: %s", document.id,
+                     document.storage_path)
+        raise Http404
+    ApplicantDocumentAccess.objects.create(document=document, user=request.user, username=request.user.username,
+                                           disposition="table")
+    response = Response({"success": True, "sheets": sheets})
+    response["Cache-Control"] = "private, no-store"
+    return response
+
+
+@api_view(["GET"])
+@permission_classes([CanOpenApplicantDocuments])
+def applicant_document(request, individual_id, document_id):
+    """Stream one applicant document. It is looked up through the individual, which the user must be allowed to
+    see; PDFs and images open in the browser, other files download. Every opening is logged."""
+    document = _visible_document(request, individual_id, document_id)
+    try:
+        handle = default_storage.open(document.storage_path, "rb")
+    except (FileNotFoundError, OSError):
+        logger.error("Applicant document %s is registered but missing from storage: %s", document.id,
+                     document.storage_path)
+        raise Http404
+    inline = document.mimetype in INLINE_MIMETYPES
+    ApplicantDocumentAccess.objects.create(document=document, user=request.user, username=request.user.username,
+                                           disposition="inline" if inline else "attachment")
+    response = FileResponse(handle, content_type=document.mimetype or "application/octet-stream",
+                            as_attachment=not inline, filename=document.filename or document.document_type)
+    response["X-Content-Type-Options"] = "nosniff"
+    response["Cache-Control"] = "private, no-store"
+    return response

@@ -299,6 +299,16 @@ Imports the submissions of one KoboToolbox form as Individuals, e.g. Urban MEP a
 | `national_id_field`, `location_field` | The answers holding the national ID and the location code (default `national_id`, `location_code`) |
 | `webhook_secret` | Turns the webhook on |
 
+#### Applicant documents
+
+Kobo is switched off after the application period, so every file applicants attached is copied into the MIS file storage, whatever the submission's outcome (imported, held, no national ID...). Nothing is overwritten or deleted.
+
+- **Register**: when a submission is stored, each of its attachments gets an `ApplicantDocument`: the Kobo reference (form, submission `_id`, attachment `uid`), the question it answers (`question_xpath`; the document type is its field name), file name and type. It is linked to the Individual the submission created, updated or was held from.
+- **Download**: a `kobo_documents_download` job, started after each Kobo import and on each scheduled tick while documents are waiting, fetches every document not stored yet and saves it with Django's `default_storage` under `<kobo_documents_path>/<source>/<kobo _id>/<document type>_<attachment uid>.<ext>`: nothing personal in the path. It records the size and sha256. A file already at that path is never overwritten (the storage picks a new name). A file larger than `kobo_document_max_bytes` (default 100 MB), or with an unexpected attachment uid, is refused. A failed download is retried by the next runs, up to `kobo_document_max_attempts` (default 5). When Kobo itself fails (unreachable, 401/403, 429 or 5xx), the run stops without counting an attempt against any document, so an outage never uses them up. `manage.py kobo_documents_retry [--source kobo]` puts documents that used up their attempts back in the queue with fresh attempts.
+- **Open**: `GET /api/msr_etl/individuals/<individual id>/documents/<document id>/` streams a stored document to a user with the `applicant_document_perms` right (default `953003`; give it to document reviewers only), only if the document belongs to that Individual and the user may see the Individual (its location limits). Otherwise it's 404, whether or not the document exists. PDFs and images open in the browser; other files download. Every opening is logged in `ApplicantDocumentAccess`.
+- **Table**: `GET /api/msr_etl/individuals/<individual id>/documents/<document id>/table/` gives a stored spreadsheet (`.xlsx` or CSV) as its visible sheets' rows of text, so the page can show it as a table. It is read on request with `openpyxl` (through `defusedxml`); the stored file is not changed. Blank rows and columns around the content are dropped, and each sheet is capped at `kobo_table_max_rows` rows and `kobo_table_max_columns` columns (default 1000 and 50; `truncated` says so). Files over `kobo_table_max_bytes` (default 20 MB), and other types, get a 400. The same right and Individual checks apply, and each showing is logged with the `table` disposition.
+- **List**: the `applicantDocuments(individualId)` query gives an Individual's documents with the form's question as label, status, size, and the URL to open each when the user has the right, plus a `tableUrl` for spreadsheets.
+
 #### The form in the MIS
 
 The Kobo form is kept as data, so the MIS can follow it without hand edits.
