@@ -1,10 +1,13 @@
 import graphene
 from django.contrib.auth.models import AnonymousUser
+from django.db.models import Count, Q
 
 from msr_etl.apps import MsrEtlConfig
 from msr_etl.gql_queries import (
     ApplicantDocumentGQLType,
     KoboApplicationGQLType,
+    KoboSubmissionGQLType,
+    KoboSubmissionsGQLType,
     MsrEtlServiceGQLType,
     MsrEtlServicesListGQLType,
     MsrEtlSourceTypeGQLType,
@@ -87,6 +90,15 @@ class Query(graphene.ObjectType):
     kobo_applications = graphene.List(
         KoboApplicationGQLType,
         individual_id=graphene.Argument(graphene.UUID, required=True),
+    )
+
+    kobo_submissions = graphene.Field(
+        KoboSubmissionsGQLType,
+        source_type=graphene.String(),
+        status=graphene.String(),
+        search=graphene.String(),
+        first=graphene.Int(default_value=20),
+        offset=graphene.Int(default_value=0),
     )
 
     applicant_documents = graphene.List(
@@ -241,6 +253,46 @@ class Query(graphene.ObjectType):
                 url=url, table_url=f"{url}table/" if url and document.mimetype in TABLE_MIMETYPES else None,
             ))
         return documents
+
+    def resolve_kobo_submissions(parent, info, source_type=None, status=None, search=None, first=20, offset=0,
+                                 **kwargs):
+        from msr_etl import kobo_review
+        from msr_etl.kobo_runs import kobo_source_types
+
+        user = info.context.user
+        rights = MsrEtlConfig.kobo_submission_perms or []
+        if type(user) is AnonymousUser or not rights or not user.has_perms(rights):
+            raise PermissionError("Unauthorized")
+        sources = kobo_source_types()
+        if source_type:
+            sources = [source for source in sources if source == source_type]
+        submissions = kobo_review.search(kobo_review.visible_submissions(user, sources), search)
+        filtered = submissions.filter(status=status) if status else submissions
+        first, offset = min(max(int(first or 20), 1), 100), max(int(offset or 0), 0)
+        page = filtered.select_related("individual").annotate(
+            document_count=Count("documents"),
+            stored_count=Count("documents", filter=Q(documents__status=ApplicantDocument.Status.STORED)),
+        ).order_by("-kobo_id")[offset:offset + first]
+        items, labels = [], {}
+        for submission in page:
+            answers = kobo_review.answers(submission)
+            rows = kobo_review.comparison(submission)
+            if rows:
+                key = (submission.source_type, submission.asset_uid, (submission.data or {}).get("__version__"))
+                if key not in labels:
+                    form = form_for_submission(submission)
+                    labels[key] = {f["name"]: f["label"] for f in form_fields(form)} if form else {}
+                rows = [{**row, "label": labels[key].get(row["field"]) or row["field"]} for row in rows]
+            items.append(KoboSubmissionGQLType(
+                id=str(submission.id), source_type=submission.source_type, kobo_id=submission.kobo_id,
+                submitted_at=submission.submitted_at, status=submission.status, reason=submission.reason,
+                national_id=submission.national_id, first_name=str(answers.get("first_name") or ""),
+                last_name=str(answers.get("last_name") or ""),
+                individual_id=str(submission.individual_id) if submission.individual_id else None,
+                comparison=rows, documents=submission.document_count, documents_stored=submission.stored_count,
+            ))
+        return KoboSubmissionsGQLType(items=items, total_count=filtered.count(),
+                                      summary=kobo_review.summary(submissions))
 
     def resolve_kobo_applications(parent, info, individual_id, **kwargs):
         if not Query._visible_individual(info, individual_id):

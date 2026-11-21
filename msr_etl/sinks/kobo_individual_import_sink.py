@@ -1,6 +1,5 @@
 import json
 import logging
-import re
 
 from individual.apps import IndividualConfig
 from individual.data_source import DATA_SOURCE_FIELD, data_source_q
@@ -8,19 +7,14 @@ from individual.models import Individual, IndividualDataSource
 
 from msr_etl.apps import MsrEtlConfig
 from msr_etl.kobo_documents import link_documents
+from msr_etl.kobo_review import compare, match_fields
 from msr_etl.models import KoboSubmission
 from msr_etl.sinks.individual_import_sink import IndividualImportSink
 
 logger = logging.getLogger(__name__)
 
-# A repeat application updates the existing record only if these all match; otherwise it is held
-DEFAULT_MATCH_FIELDS = ("first_name", "last_name", "dob", "sex")
 # Columns the individual import takes besides its schema's properties (individual workflows' header check)
 _IMPORT_EXTRA_COLUMNS = {"recipient_info", "group_code", "individual_role", DATA_SOURCE_FIELD, "ID"}
-
-
-def _same(value):
-    return re.sub(r"\s+", " ", str(value if value is not None else "")).strip().lower()
 
 
 class KoboIndividualImportSink(IndividualImportSink):
@@ -37,9 +31,7 @@ class KoboIndividualImportSink(IndividualImportSink):
         config = MsrEtlConfig.get_source_config(self.source_type)
         self.asset_uid = str(config.get("asset_uid") or "")
         self.national_id_field = config.get("national_id_field") or "national_id"
-        self.match_fields = tuple(config.get("match_fields") or DEFAULT_MATCH_FIELDS)
-        native = {field.name for field in Individual._meta.get_fields()}
-        self.native_match_fields = {field for field in self.match_fields if field in native}
+        self.match_fields = match_fields(self.source_type)
         schema = json.loads(IndividualConfig.individual_schema or "{}")
         self.importable = (set(schema.get("properties", {})) | set(IndividualConfig.individual_base_fields or [])
                            | _IMPORT_EXTRA_COLUMNS) - {"id"}
@@ -110,15 +102,8 @@ class KoboIndividualImportSink(IndividualImportSink):
         return found
 
     def _differences(self, individual, record):
-        differences = []
-        for field in self.match_fields:
-            if field in self.native_match_fields:
-                current = getattr(individual, field)
-            else:
-                current = (individual.json_ext or {}).get(field)
-            if _same(current) != _same(record.get(field)):
-                differences.append(f"{field} '{current}' in the MIS, '{record.get(field)}' applied")
-        return differences
+        return [f"{row['field']} '{row['mis']}' in the MIS, '{row['applied']}' applied"
+                for row in compare(individual, record, self.match_fields) if row["differs"]]
 
     def _mark_imported(self, records, result, status):
         """Link each application to its Individual, or record why the import refused it."""
