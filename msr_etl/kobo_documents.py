@@ -118,6 +118,11 @@ def download_document(kobo, document):
             if size > max_bytes:
                 raise DocumentError(f"Larger than kobo_document_max_bytes ({max_bytes} bytes)")
             buffer.write(chunk)
+        expected = response.headers.get("Content-Length")
+        if size == 0:
+            raise DocumentError("Kobo sent an empty file")
+        if expected and expected.isdigit() and int(expected) != size:
+            raise DocumentError(f"Kobo sent {size} bytes of {expected}")
         buffer.seek(0)
         # save() picks a new name if the path is taken, so an existing file is never overwritten
         path = default_storage.save(storage_path(document), File(buffer))

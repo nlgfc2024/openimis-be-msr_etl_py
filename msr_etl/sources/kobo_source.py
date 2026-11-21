@@ -48,14 +48,38 @@ class KoboSubmissionSource(StagedDataSource):
 
     def kobo_ids(self):
         """Every submission id the form has, oldest first (ids only, so one request covers many)."""
-        ids, start = [], 0
+        return [row["_id"] for row in self._every_row(["_id"])]
+
+    def attachment_uids(self):
+        """{submission id: uids of its attachments not deleted in Kobo}, for every submission of the form."""
+        return {row["_id"]: {str(a["uid"]) for a in (row.get("_attachments") or [])
+                             if a.get("uid") and not a.get("is_deleted")}
+                for row in self._every_row(["_id", "_attachments"])}
+
+    def _every_row(self, fields):
+        """Every row of the form, paged until Kobo's own count is reached (a server may cap a page below the
+        limit asked); fewer rows than that count is an error, never a short list."""
+        rows, start, count = [], 0, None
         while True:
-            results = self._get({"fields": json.dumps(["_id"]), "sort": json.dumps({"_id": 1}),
-                                 "start": start, "limit": _MAX_PAGE_SIZE}).get("results") or []
-            ids.extend(row["_id"] for row in results if row.get("_id") is not None)
-            if len(results) < _MAX_PAGE_SIZE:
-                return ids
+            page = self._get({"fields": json.dumps(fields), "sort": json.dumps({"_id": 1}),
+                              "start": start, "limit": _MAX_PAGE_SIZE})
+            results = page.get("results") or []
+            count = page.get("count", count)
+            rows.extend(row for row in results if row.get("_id") is not None)
             start += len(results)
+            if count is None:
+                # A Kobo without count: a short page is the last
+                if len(results) < _MAX_PAGE_SIZE:
+                    return rows
+            elif start >= count or not results:
+                break
+        if start != count:
+            raise self.Error(f"Kobo form {self.asset_uid} reports {count} submissions but gave {start}")
+        return rows
+
+    def deployment_active(self):
+        """Whether the form still takes submissions in Kobo; None when Kobo doesn't say."""
+        return self._get({}, path="").get("deployment__active")
 
     def _headers(self):
         return {

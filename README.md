@@ -318,6 +318,20 @@ The `koboSubmissions(sourceType, status, search, first, offset)` query lists Kob
 - **Held**: a held submission comes with `comparison`, each match field (`match_fields`, default first name, last name, date of birth, sex) with its form label, the value in the MIS as the record is now, the value applied, and whether they differ (case and extra spaces ignored). It is the same comparison the import holds a submission on.
 - **Counts**: `summary` counts the submissions by outcome and their documents by status, over the search but not the outcome filter.
 
+#### Before switching Kobo off
+
+`manage.py kobo_reconcile [--source kobo] [--checksums] [--json report.json]` checks, after the final transfer, that the MIS holds everything Kobo has. It is read-only, and exits with an error while there are gaps, each listed with what fixes it:
+
+- **not in MIS**: submissions Kobo has and the MIS hasn't stored (run the import).
+- **unfinished**: stored but still `RECEIVED` (run the import again).
+- **unregistered**: an attachment of a stored submission with no `ApplicantDocument`.
+- **not stored**: documents pending or failed (wait for the download, or `kobo_documents_retry`).
+- **missing files**: stored documents whose file isn't in the file storage.
+- **wrong size**: a stored file that is empty or not the size downloaded (checked on every run).
+- **checksum mismatch** (with `--checksums`, which re-reads every file): a stored file that differs from what was downloaded.
+
+Kobo's submission list is paged until Kobo's own count is reached, and fewer rows than that is an error rather than a short list. The report says whether the form is still open in Kobo: close it before the final check, or more may arrive after it. Submissions the MIS keeps that Kobo no longer has (deleted there) are counted, not treated as gaps. `--json` writes the full report, with every item rather than the first 50 of each gap.
+
 #### The form in the MIS
 
 The Kobo form is kept as data, so the MIS can follow it without hand edits.

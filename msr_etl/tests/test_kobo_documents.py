@@ -222,6 +222,17 @@ class RegisterAndDownloadTestCase(_StorageTestCase):
             download_document(kobo, statement)
         self.assertFalse(default_storage.exists(storage_path(statement)))
 
+    def test_an_empty_or_short_download_is_refused(self):
+        statement = self._store()["doc_bank_statement"]
+        empty, short = _kobo_file(b""), _kobo_file(PDF)
+        short.headers["Content-Length"] = str(len(PDF) + 10)
+        for response, message in ((empty, "empty file"), (short, "bytes of")):
+            kobo = MagicMock()
+            kobo.request.return_value = response
+            with self.assertRaisesRegex(DocumentError, message):
+                download_document(kobo, statement)
+        self.assertFalse(default_storage.exists(storage_path(statement)))
+
     def test_used_up_documents_can_be_put_back_in_the_queue(self):
         statement = self._store()["doc_bank_statement"]
         with patch.object(MsrEtlConfig, "kobo_document_max_attempts", 1):

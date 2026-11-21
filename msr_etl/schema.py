@@ -269,10 +269,11 @@ class Query(graphene.ObjectType):
         submissions = kobo_review.search(kobo_review.visible_submissions(user, sources), search)
         filtered = submissions.filter(status=status) if status else submissions
         first, offset = min(max(int(first or 20), 1), 100), max(int(offset or 0), 0)
+        # id breaks ties between sources sharing Kobo ids, so pages don't skip or repeat rows
         page = filtered.select_related("individual").annotate(
             document_count=Count("documents"),
             stored_count=Count("documents", filter=Q(documents__status=ApplicantDocument.Status.STORED)),
-        ).order_by("-kobo_id")[offset:offset + first]
+        ).order_by("-kobo_id", "id")[offset:offset + first]
         items, labels = [], {}
         for submission in page:
             answers = kobo_review.answers(submission)
