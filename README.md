@@ -320,7 +320,7 @@ The `koboSubmissions(sourceType, status, search, first, offset)` query lists Kob
 
 #### Reacting to an imported application
 
-Other modules can act on each application without msr_etl depending on them: `msr_etl.signals.kobo_submission_applied` is sent once an application has created (`IMPORTED`) or updated (`UPDATED`) its Individual, after the transaction commits, with `submission`, `individual` and `status`. Held and refused applications don't send it. A receiver that raises is logged and doesn't interrupt the import.
+Other modules can act on each application without msr_etl depending on them: `msr_etl.signals.kobo_submission_applied` is sent once an application has created (`IMPORTED`) or updated (`UPDATED`) its Individual, after the transaction commits, with `submission`, `individual` and `status`. Held and refused applications don't send it. `msr_etl.signals.applicant_document_stored` is sent, with `document`, once an applicant's document has been downloaded and stored; documents are downloaded after their application is imported, so this is when a module reading a file can act on it. A receiver that raises is logged and doesn't interrupt the import or the download.
 
 ```python
 from msr_etl.signals import kobo_submission_applied
