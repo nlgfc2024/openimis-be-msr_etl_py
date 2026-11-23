@@ -42,7 +42,7 @@ class NormaliseFormTestCase(SimpleTestCase):
     def test_reads_the_final_xlsform(self):
         form = read_xlsform(FORM_FILE)
 
-        self.assertEqual((form["id_string"], form["version"]), ("urban_mep_application", "2026111827"))
+        self.assertEqual((form["id_string"], form["version"]), ("urban_mep_application", "2026112301"))
         # Steps 1 and 2 hold only notes
         self.assertEqual(form["sections"][0]["label"], "Step 3 of 17 · Applicant information")
         self.assertEqual(len(form["sections"]), 15)
@@ -50,6 +50,9 @@ class NormaliseFormTestCase(SimpleTestCase):
         self.assertEqual((fields["legal_form"]["type"], fields["legal_form"]["list"]), ("select_one", "legal_form"))
         self.assertEqual((fields["res_ward"]["type"], fields["res_ward"]["file"]), ("select_one_from_file", "wards.csv"))
         self.assertNotIn("program_summary", fields)
+        # Asked only when Bank Statements is ticked
+        self.assertEqual((fields["business_bank"]["type"], fields["business_bank"]["list"]), ("select_one", "bank"))
+        self.assertEqual(form["choices"]["bank"]["other"], "Other")
         self.assertNotIn("start", fields)
         self.assertEqual(form["choices"]["contribution_source"]["business_assets"], "Business Assets")
 
@@ -65,7 +68,9 @@ class NormaliseFormTestCase(SimpleTestCase):
         schema = individual_schema(read_xlsform(FORM_FILE))
 
         properties = schema["properties"]
-        self.assertEqual(len(properties), 96)
+        self.assertEqual(len(properties), 99)
+        for bank_answer in ("business_account_name", "business_bank", "business_bank_other", "business_account_number"):
+            self.assertEqual(properties[bank_answer]["type"], "string")
         for native in ("first_name", "last_name", "dob", "location_code", "location_name"):
             self.assertNotIn(native, properties)
         self.assertEqual(properties["national_id"], {"type": "string", "title": "National ID Number", "uniqueness": True})
@@ -104,8 +109,8 @@ class KoboFormStoreTestCase(TestCase):
             config = json.load(open(path))
 
         self.assertTrue(config["enable_python_workflows"])
-        self.assertEqual(len(json.loads(config["individual_schema"])["properties"]), 96)
-        self.assertEqual(KoboFormVersion.objects.get().version, "2026111827")
+        self.assertEqual(len(json.loads(config["individual_schema"])["properties"]), 99)
+        self.assertEqual(KoboFormVersion.objects.get().version, "2026112301")
 
     def test_a_submission_is_shown_with_its_own_form_version(self):
         old = store_form("kobo", "aForm", {**normalise_form(KOBO_CONTENT["survey"], [], {"version": "1"}, "vOld")})
@@ -177,7 +182,7 @@ class KoboApplicationViewTestCase(TestCase):
     def test_the_query_returns_the_individuals_applications(self):
         applications = Query.resolve_kobo_applications(None, self._info(), individual_id=self.individual.id)
 
-        self.assertEqual([(a.kobo_id, a.status, a.form_version) for a in applications], [(5, "IMPORTED", "2026111827")])
+        self.assertEqual([(a.kobo_id, a.status, a.form_version) for a in applications], [(5, "IMPORTED", "2026112301")])
         self.assertTrue(applications[0].sections)
 
     def test_an_application_without_its_form_version_shows_its_raw_answers(self):
