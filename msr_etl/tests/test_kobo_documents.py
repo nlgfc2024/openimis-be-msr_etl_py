@@ -58,7 +58,7 @@ def _attachment(uid, question, name, mimetype, deleted=False):
 
 def _with_attachments(kobo_id):
     return _submission(kobo_id, _attachments=[
-        _attachment("attPDF", "documents/doc_bank_statement", "statement.pdf", "application/pdf"),
+        _attachment("attPDF", "performance/bank_statement_3m", "statement.pdf", "application/pdf"),
         _attachment("attXLS", "performance/performance_template", "performance.xlsx",
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
         _attachment("attOLD", "documents/doc_other", "replaced.pdf", "application/pdf", deleted=True),
@@ -101,10 +101,10 @@ class RegisterAndDownloadTestCase(_StorageTestCase):
         documents = self._store()
         register_documents("kobo", "aForm", [_with_attachments(1)])
 
-        self.assertEqual(sorted(documents), ["doc_bank_statement", "performance_template"])
-        statement = documents["doc_bank_statement"]
+        self.assertEqual(sorted(documents), ["bank_statement_3m", "performance_template"])
+        statement = documents["bank_statement_3m"]
         self.assertEqual((statement.filename, statement.mimetype, statement.status, statement.question),
-                         ("statement.pdf", "application/pdf", "PENDING", "documents/doc_bank_statement"))
+                         ("statement.pdf", "application/pdf", "PENDING", "performance/bank_statement_3m"))
         self.assertEqual(ApplicantDocument.objects.count(), 2)
 
     def test_the_source_registers_the_documents_of_what_it_stores(self):
@@ -116,7 +116,7 @@ class RegisterAndDownloadTestCase(_StorageTestCase):
         self.assertEqual(ApplicantDocument.objects.filter(submission__kobo_id=4).count(), 2)
 
     def test_a_download_is_stored_with_its_checksum_under_a_path_with_nothing_personal(self):
-        statement = self._store()["doc_bank_statement"]
+        statement = self._store()["bank_statement_3m"]
         kobo = MagicMock()
         kobo.request.return_value = _kobo_file(PDF)
 
@@ -128,13 +128,13 @@ class RegisterAndDownloadTestCase(_StorageTestCase):
         self.assertEqual(kobo.request.call_args.kwargs["headers"], {"Accept": "*/*"})
         self.assertEqual((statement.status, statement.size, statement.sha256),
                          ("STORED", len(PDF), hashlib.sha256(PDF).hexdigest()))
-        self.assertEqual(statement.storage_path, "kobo_documents/kobo/1/doc_bank_statement_attPDF.pdf")
+        self.assertEqual(statement.storage_path, "kobo_documents/kobo/1/bank_statement_3m_attPDF.pdf")
         self.assertNotIn("AB12CD34", statement.storage_path)
         with default_storage.open(statement.storage_path, "rb") as stored:
             self.assertEqual(stored.read(), PDF)
 
     def test_an_existing_file_is_never_overwritten(self):
-        statement = self._store()["doc_bank_statement"]
+        statement = self._store()["bank_statement_3m"]
         default_storage.save(storage_path(statement), ContentFile(b"already here"))
         kobo = MagicMock()
         kobo.request.return_value = _kobo_file(PDF)
@@ -147,7 +147,7 @@ class RegisterAndDownloadTestCase(_StorageTestCase):
             self.assertEqual(untouched.read(), b"already here")
 
     def test_failures_are_retried_up_to_the_limit(self):
-        statement = self._store()["doc_bank_statement"]
+        statement = self._store()["bank_statement_3m"]
         with patch.object(MsrEtlConfig, "kobo_document_max_attempts", 2):
             record_failure(statement, "Kobo returned 502")
             self.assertIn(statement, to_download("kobo"))
@@ -172,7 +172,7 @@ class RegisterAndDownloadTestCase(_StorageTestCase):
             jobs.run_kobo_documents_download(reporter, source_type="kobo")
 
         self.assertEqual(dict(ApplicantDocument.objects.values_list("document_type", "status")),
-                         {"doc_bank_statement": "STORED", "performance_template": "FAILED"})
+                         {"bank_statement_3m": "STORED", "performance_template": "FAILED"})
         reporter.partial.assert_called_once()
 
     def _run(self, side_effect, reporter=None):
@@ -204,7 +204,7 @@ class RegisterAndDownloadTestCase(_StorageTestCase):
         self.assertEqual(statuses, ["PENDING", "STORED"])
 
     def test_an_unexpected_attachment_uid_is_never_requested(self):
-        statement = self._store()["doc_bank_statement"]
+        statement = self._store()["bank_statement_3m"]
         statement.kobo_attachment_uid = "../x"
         kobo = MagicMock()
 
@@ -214,7 +214,7 @@ class RegisterAndDownloadTestCase(_StorageTestCase):
         self.assertNotIn("..", storage_path(statement))
 
     def test_a_file_over_the_size_limit_is_refused(self):
-        statement = self._store()["doc_bank_statement"]
+        statement = self._store()["bank_statement_3m"]
         kobo = MagicMock()
         kobo.request.return_value = _kobo_file(PDF)
 
@@ -223,7 +223,7 @@ class RegisterAndDownloadTestCase(_StorageTestCase):
         self.assertFalse(default_storage.exists(storage_path(statement)))
 
     def test_an_empty_or_short_download_is_refused(self):
-        statement = self._store()["doc_bank_statement"]
+        statement = self._store()["bank_statement_3m"]
         empty, short = _kobo_file(b""), _kobo_file(PDF)
         short.headers["Content-Length"] = str(len(PDF) + 10)
         for response, message in ((empty, "empty file"), (short, "bytes of")):
@@ -234,7 +234,7 @@ class RegisterAndDownloadTestCase(_StorageTestCase):
         self.assertFalse(default_storage.exists(storage_path(statement)))
 
     def test_used_up_documents_can_be_put_back_in_the_queue(self):
-        statement = self._store()["doc_bank_statement"]
+        statement = self._store()["bank_statement_3m"]
         with patch.object(MsrEtlConfig, "kobo_document_max_attempts", 1):
             record_failure(statement, "Kobo returned 404")
             self.assertNotIn(statement, to_download("kobo"))
@@ -292,9 +292,9 @@ class ApplicantDocumentAccessTestCase(_StorageTestCase):
         ApplicantDocument.objects.update(individual=self.individual)
         for document in documents.values():
             kobo = MagicMock()
-            kobo.request.return_value = _kobo_file(PDF if document.document_type == "doc_bank_statement" else XLSX)
+            kobo.request.return_value = _kobo_file(PDF if document.document_type == "bank_statement_3m" else XLSX)
             download_document(kobo, document)
-        self.statement = ApplicantDocument.objects.get(document_type="doc_bank_statement")
+        self.statement = ApplicantDocument.objects.get(document_type="bank_statement_3m")
         self.template = ApplicantDocument.objects.get(document_type="performance_template")
 
     def _open(self, document, individual_id=None, allowed=True, visible=True, view=applicant_document):
@@ -378,8 +378,8 @@ class ApplicantDocumentAccessTestCase(_StorageTestCase):
             documents = {d.document_type: d for d in Query.resolve_applicant_documents(
                 None, info, individual_id=self.individual.id)}
 
-        statement = documents["doc_bank_statement"]
-        self.assertEqual(statement.label, "Latest Business Bank Statement, last 3 months (PDF)")
+        statement = documents["bank_statement_3m"]
+        self.assertEqual(statement.label, "Attach recent Business Bank Statement (PDF) for the past 3 months")
         self.assertTrue(statement.can_open)
         self.assertEqual(statement.url, f"msr_etl/individuals/{self.individual.id}/documents/{self.statement.id}/")
         self.assertIsNone(statement.table_url)
