@@ -333,7 +333,7 @@ class KoboIndividualImportSinkTestCase(TestCase):
         self.addCleanup(kobo_submission_applied.disconnect, broken)
         calls = self._receive()
 
-        with self.assertLogs("msr_etl.sinks.kobo_individual_import_sink", "ERROR"):
+        with self.assertLogs("msr_etl.signals", "ERROR"):
             with self.captureOnCommitCallbacks(execute=True):
                 self.sink.push([self._record(1)], "batch")
 

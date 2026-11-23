@@ -25,6 +25,7 @@ from msr_etl.kobo_documents import (
 from msr_etl.kobo_form import read_xlsform, store_form
 from msr_etl.models import ApplicantDocument, ApplicantDocumentAccess, KoboSubmission
 from msr_etl.schema import Query
+from msr_etl.signals import applicant_document_stored
 from msr_etl.sources import KoboSubmissionSource
 from msr_etl.tests.test_kobo import SOURCES, _submission
 from msr_etl.tests.test_kobo_form import FORM_FILE
@@ -132,6 +133,27 @@ class RegisterAndDownloadTestCase(_StorageTestCase):
         self.assertNotIn("AB12CD34", statement.storage_path)
         with default_storage.open(statement.storage_path, "rb") as stored:
             self.assertEqual(stored.read(), PDF)
+
+    def test_a_stored_document_is_signalled_after_commit_and_a_failed_one_is_not(self):
+        documents = self._store()
+        received = []
+
+        def receiver(sender, document, **kwargs):
+            received.append((document.document_type, document.status))
+
+        applicant_document_stored.connect(receiver, weak=False)
+        self.addCleanup(applicant_document_stored.disconnect, receiver)
+        kobo = MagicMock()
+        kobo.request.return_value = _kobo_file(PDF)
+
+        with self.captureOnCommitCallbacks(execute=True):
+            download_document(kobo, documents["bank_statement_3m"])
+            self.assertEqual(received, [])
+        kobo.request.return_value = _kobo_file(b"")
+        with self.captureOnCommitCallbacks(execute=True), self.assertRaises(DocumentError):
+            download_document(kobo, documents["performance_template"])
+
+        self.assertEqual(received, [("bank_statement_3m", "STORED")])
 
     def test_an_existing_file_is_never_overwritten(self):
         statement = self._store()["bank_statement_3m"]
