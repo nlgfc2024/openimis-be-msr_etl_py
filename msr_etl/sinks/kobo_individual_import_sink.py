@@ -11,7 +11,7 @@ from msr_etl.apps import MsrEtlConfig
 from msr_etl.kobo_documents import link_documents
 from msr_etl.kobo_review import compare, match_fields
 from msr_etl.models import KoboSubmission
-from msr_etl.signals import kobo_submission_applied
+from msr_etl import signals
 from msr_etl.sinks.individual_import_sink import IndividualImportSink
 
 logger = logging.getLogger(__name__)
@@ -22,16 +22,11 @@ APPLIED_STATUSES = (KoboSubmission.Status.IMPORTED, KoboSubmission.Status.UPDATE
 
 
 def _send_applied(submission, individual, status):
-    """Tell receivers (e.g. appraisal) an application reached its Individual; a receiver error is logged, not
-    raised, so it can't undo or interrupt the import."""
+    """Tell receivers (e.g. appraisal) an application reached its Individual."""
     instance = KoboSubmission.objects.filter(**submission).first()
-    if instance is None:
-        return
-    for receiver, result in kobo_submission_applied.send_robust(
-            sender=KoboSubmission, submission=instance, individual=individual, status=status):
-        if isinstance(result, Exception):
-            logger.error("kobo_submission_applied receiver %s failed for Kobo submission %s",
-                         receiver, instance.kobo_id, exc_info=result)
+    if instance is not None:
+        signals.send(signals.kobo_submission_applied, KoboSubmission, submission=instance, individual=individual,
+                     status=status)
 
 
 class KoboIndividualImportSink(IndividualImportSink):

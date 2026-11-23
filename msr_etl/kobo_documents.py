@@ -16,9 +16,11 @@ import openpyxl
 import requests
 from django.core.files import File
 from django.core.files.storage import default_storage
+from django.db import transaction
 from django.db.models import F, Q
 from django.utils import timezone
 
+from msr_etl import signals
 from msr_etl.apps import MsrEtlConfig
 from msr_etl.models import ApplicantDocument, KoboSubmission
 
@@ -131,6 +133,13 @@ def download_document(kobo, document):
         mimetype=document.mimetype or response.headers.get("Content-Type", "").split(";")[0],
         error="", stored_at=timezone.now(), updated_at=timezone.now(),
     )
+    transaction.on_commit(lambda: _send_stored(document.id))
+
+
+def _send_stored(document_id):
+    document = ApplicantDocument.objects.select_related("submission").filter(id=document_id).first()
+    if document is not None:
+        signals.send(signals.applicant_document_stored, ApplicantDocument, document=document)
 
 
 class TableError(Exception):
