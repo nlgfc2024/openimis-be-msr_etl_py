@@ -20,6 +20,7 @@ from msr_etl.auth_provider import get_auth_provider
 from msr_etl.kobo_form import individual_schema_json, read_xlsform
 from msr_etl.models import KoboSubmission, MsrEtlLocationCodeChange, MsrEtlSourceRun
 from msr_etl.services.ubr_service import UBRIndividualService
+from msr_etl.signals import kobo_submission_applied
 from msr_etl.sinks import KoboIndividualImportSink
 from msr_etl.source_registry import individual_sink_class
 from msr_etl.sources import KoboSubmissionSource
@@ -278,6 +279,66 @@ class KoboIndividualImportSinkTestCase(TestCase):
             self.sink.push([self._record(1)], "batch")
 
         self.assertEqual((self._submission(1).status, self._submission(1).reason), ("INVALID", "location_name: not valid"))
+
+    def _receive(self):
+        calls = []
+
+        def receiver(sender, submission, individual, status, **kwargs):
+            calls.append((submission.kobo_id, individual.id, status))
+
+        kobo_submission_applied.connect(receiver, weak=False)
+        self.addCleanup(kobo_submission_applied.disconnect, receiver)
+        return calls
+
+    def test_an_imported_or_updated_application_is_signalled_after_commit(self):
+        calls = self._receive()
+
+        with self.captureOnCommitCallbacks(execute=True):
+            self.sink.push([self._record(1)], "first")
+            self.assertEqual(calls, [])
+        with self.captureOnCommitCallbacks(execute=True):
+            self.sink.push([self._record(2)], "second")
+
+        individual_id = self._submission(1).individual_id
+        self.assertEqual(calls, [(1, individual_id, "IMPORTED"), (2, individual_id, "UPDATED")])
+
+    def test_a_held_or_refused_application_is_not_signalled(self):
+        with self.captureOnCommitCallbacks(execute=True):
+            self.sink.push([self._record(1)], "first")
+        calls = self._receive()
+
+        with self.captureOnCommitCallbacks(execute=True):
+            self.sink.push([self._record(2, dob="1996-04-02")], "held")
+        self.sink._import_new_records = lambda records, batch: {"data": {"upload_uuid": "u1"}}
+        with patch.object(KoboIndividualImportSink, "_validation_errors",
+                          return_value={"XY98ZW76": "location_name: not valid"}):
+            with self.captureOnCommitCallbacks(execute=True):
+                self.sink.push([self._record(3, national_id="XY98ZW76")], "refused")
+
+        self.assertEqual(calls, [])
+
+    def test_a_rolled_back_import_is_not_signalled(self):
+        calls = self._receive()
+
+        with self.captureOnCommitCallbacks(execute=False) as callbacks:
+            self.sink.push([self._record(1)], "batch")
+
+        self.assertEqual((len(callbacks), calls), (1, []))
+
+    def test_a_failing_receiver_does_not_interrupt_the_import(self):
+        def broken(sender, **kwargs):
+            raise RuntimeError("receiver failed")
+
+        kobo_submission_applied.connect(broken, weak=False)
+        self.addCleanup(kobo_submission_applied.disconnect, broken)
+        calls = self._receive()
+
+        with self.assertLogs("msr_etl.sinks.kobo_individual_import_sink", "ERROR"):
+            with self.captureOnCommitCallbacks(execute=True):
+                self.sink.push([self._record(1)], "batch")
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(self._submission(1).status, "IMPORTED")
 
 
 @patch.object(MsrEtlConfig, "sources", SOURCES)
