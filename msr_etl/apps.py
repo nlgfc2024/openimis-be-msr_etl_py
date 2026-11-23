@@ -28,9 +28,8 @@ DEFAULT_CONFIG = {
             "auth_bearer_token": "",
             "timeout_seconds": 60,
             "filter_schema": {"location": [
-                {"name": "msr_district_id", "label": "MSR district ID (not district code)",
-                 "type": "number", "required": True, "min": 1, "integer": True,
-                 "helpText": "Synchronize publications and verified village memberships for one MSR district. Existing CoreMIS locations are matched by code and parent."},
+                {"name": "district_uuid", "label": "District", "type": "district", "required": True,
+                 "helpText": "Import publications and verified memberships for a reviewed CoreMIS district link."},
             ]},
         },
         "ubr": {

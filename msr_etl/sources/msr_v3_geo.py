@@ -1,5 +1,5 @@
-"""Compatibility facade; the verified transport now belongs to mapping."""
-from mapping.providers.msr_v3 import MsrV3Provider
+"""Compatibility facade; the verified transport belongs to MSR ETL."""
+from msr_etl.providers.msr_v3 import MsrV3Provider
 from msr_etl.apps import MsrEtlConfig
 from msr_etl.auth_provider.bearerAuthProvider import BearerAuthProvider
 from msr_etl.sources.base import DataSource
@@ -12,4 +12,5 @@ class MsrV3GeoClient(MsrV3Provider):
         super().__init__(MsrEtlConfig.get_source_config(source_type),
                          session=session if session is not None else create_retry_session(source_type),
                          error_type=DataSource.Error)
-        self.auth = BearerAuthProvider(source_type=source_type)
+        if not self.config.get("token_env"):
+            self.auth = BearerAuthProvider(source_type=source_type)

@@ -285,19 +285,25 @@ class ScheduleMsrUbrLocationsImportMutation(BaseMutation):
             service_kwargs = build_schedule_service_kwargs(UBRLocationService, "location", data)
             # constructed only to validate inputs (e.g. gvh without ta) - no UBR call yet
             validated = UBRLocationService(user, **service_kwargs)
-            from mapping.providers.district import DistrictSource
+            from msr_etl.providers.district import DistrictSource
             if isinstance(validated.source, DistrictSource):
-                from mapping.access import require_district_scope
-                require_district_scope(user, validated.source.source_instance, validated.source.district_id, "legacy")
+                from msr_etl.geo_access import require_district_scope
+                require_district_scope(user, validated.source.source_instance, validated.source.district_id, "msr_etl")
 
-            run_as_scheduled_job(
-                "msr_etl.jobs.run_ubr_locations_import",
-                module="msr_etl",
-                job_type="ubr_locations_import",
-                user=user,
-                params=service_kwargs,
-                client_mutation_id=client_mutation_id,
-            )
+            def schedule():
+                run_as_scheduled_job(
+                    "msr_etl.jobs.run_ubr_locations_import",
+                    module="msr_etl",
+                    job_type="ubr_locations_import",
+                    user=user,
+                    params=service_kwargs,
+                    client_mutation_id=client_mutation_id,
+                )
+            if isinstance(validated.source, DistrictSource):
+                from django.db import transaction
+                transaction.on_commit(schedule)
+            else:
+                schedule()
             return None
         except Exception as exc:
             return [{

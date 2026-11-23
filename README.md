@@ -533,3 +533,47 @@ Run focused Django tests from the backend project when a PostgreSQL test databas
 cd openimis-be_py/openIMIS
 ../.venv/bin/python manage.py test msr_etl.tests
 ```
+
+## MSR geospatial import ownership
+
+MSR ETL owns the v3 geospatial provider, v2 verified-membership calls, credentials,
+pagination, signed-file retrieval, staging, retries and source/district write
+ordering. It does not require the Mapping package. The existing geographic
+location source delegates to `msr_etl.providers`; household imports retain their
+existing source/endpoint behavior.
+
+Use the existing Location import screen/source `msr_geo_v3`. Its schema reuses
+`location.MwDistrictPicker` and passes `district_uuid`; the backend resolves the
+reviewed MSR district ID and rechecks existing import rights and district scope.
+
+```graphql
+mutation Import($input: ScheduleMsrUbrLocationsImportMutationInput!) {
+  scheduleMsrUbrLocationsImport(input: $input) { clientMutationId internalId }
+}
+```
+
+```json
+{"input":{"sourceType":"msr_geo_v3","filters":{"district_uuid":"COREMIS_DISTRICT_UUID"},"clientMutationId":"UNIQUE_REQUEST_ID"}}
+```
+
+Core mutation tracking/jobs provide progress and cancellation. Geometry is
+retrieved/validated while staging and then published into CoreMIS's local
+GeographicFeature store. CoreMIS Mapping reads this store without contacting
+MSR. Last accepted geometry is retained on delivery failure, and authoritative
+withdrawal/restoration follows accepted publication revisions.
+
+Existing legacy callers may construct sources with `msr_district_id`; new UI
+requests use `district_uuid`. The old Mapping-owned import mutation is retired.
+
+Portable provider checks: `python -m msr_etl.tests.run_geo_unit`.
+Host checks (disposable PostgreSQL schema):
+
+```bash
+python manage.py shell -c 'from msr_etl.tests.run_geo_host import run; run()'
+```
+
+Deployment utilities: `migrate_geo_ownership` previews by default (`--apply` saves),
+and `materialize_msr_geography --source-type msr_geo_v3 --district-id 13 --download`
+seeds local display publications from existing accepted references. Finish
+imports and stop old workers before migration. See the Mapping repository's
+`docs/MSR_IMPORT_OWNERSHIP.md` for the coordinated deployment/rollback procedure.

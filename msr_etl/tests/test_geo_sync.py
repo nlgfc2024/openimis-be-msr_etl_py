@@ -48,12 +48,14 @@ class GeoSourceTests(SimpleTestCase):
                 MsrGeoSource("msr_geo_v3", 13)
 
     def test_schedule_validates_filters_without_http(self):
-        with patch("msr_etl.gql_mutations.run_as_scheduled_job") as schedule, patch("mapping.access.require_district_scope"):
+        with patch("msr_etl.gql_mutations.run_as_scheduled_job") as schedule, patch("msr_etl.geo_access.require_district_scope"), \
+             patch("msr_etl.geo_access.resolve_district", return_value=13), \
+             patch("django.db.transaction.on_commit", side_effect=lambda callback: callback()):
             result = ScheduleMsrUbrLocationsImportMutation._mutate(
-                Mock(), source_type="msr_geo_v3", filters={"msr_district_id": 13},
+                Mock(), source_type="msr_geo_v3", filters={"district_uuid": "district-fixture"},
             )
             self.assertIsNone(result)
-            self.assertEqual(schedule.call_args.kwargs["params"], {"source_type": "msr_geo_v3", "msr_district_id": 13})
+            self.assertEqual(schedule.call_args.kwargs["params"], {"source_type": "msr_geo_v3", "district_uuid": "district-fixture"})
         with self.assertRaises(Exception):
             build_schedule_service_kwargs(UBRLocationService, "location", {
                 "source_type": "msr_geo_v3", "filters": {"district": "213"},
@@ -90,7 +92,7 @@ class GeoStagingTests(TestCase):
     def setUp(self):
         # These writer tests isolate authorization/config refresh; the mapping
         # contract tests exercise denial, revocation and configuration rotation.
-        for target in ("mapping.synchronization.refresh_configuration", "mapping.synchronization.require_district_scope"):
+        for target in ("msr_etl.geo_synchronization.refresh_configuration", "msr_etl.geo_synchronization.require_district_scope"):
             guard = patch(target)
             guard.start()
             self.addCleanup(guard.stop)

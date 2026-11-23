@@ -75,12 +75,12 @@ def stage_unit(job_uuid, source, unit, kind):
     )
     try:
         receipt = None
-        if unit["unit_type"] == MsrEtlSyncUnit.UnitType.GEO_DISTRICT and apps.is_installed("mapping"):
-            from mapping.synchronization import prepare_receipt
+        if unit["unit_type"] == MsrEtlSyncUnit.UnitType.GEO_DISTRICT:
+            from msr_etl.geo_synchronization import prepare_receipt
             receipt = prepare_receipt(source, sync_unit)
         payload = source.fetch_unit(unit)
         if receipt is not None:
-            payload["_mapping"] = receipt
+            payload["_msr_geo"] = receipt
         fields = {}
         if isinstance(payload, list):
             payload, fields["record_identities"] = _dedupe_rows(job_uuid, source, payload)
@@ -106,11 +106,11 @@ def stage_unit(job_uuid, source, unit, kind):
 
 def _sync_unit_payload(unit, user):
     """Returns how many records were pushed; the adapter drops invalid ones."""
+    if unit.unit_type == MsrEtlSyncUnit.UnitType.GEO_DISTRICT:
+        from msr_etl.geo_synchronization import apply_unit
+        return apply_unit(unit, user)
     if unit.raw_payload is None:
         return 0
-    if unit.unit_type == MsrEtlSyncUnit.UnitType.GEO_DISTRICT and apps.is_installed("mapping"):
-        from mapping.synchronization import apply_unit
-        return apply_unit(unit, user)
     _, adapter_cls = _RESOLVERS[unit.kind](unit.source_type)
     transformed = adapter_cls(source_type=unit.source_type).transform(unit.raw_payload)
     if transformed:

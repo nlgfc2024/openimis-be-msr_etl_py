@@ -12,45 +12,11 @@ from msr_etl.sources.msr_v3_geo import MsrV3GeoClient
 from msr_etl.sources.http import get_ssl_verify_setting, get_timeout_seconds
 
 MAX_BYTES = 5 * 1024 * 1024
-MAX_POINTS = 100000
+from location.geography import safe_geojson
 
 
-def safe_geojson(body):
-    """Render polygon geometry only, excluding arbitrary source properties."""
-    if not isinstance(body, dict):
-        raise ValueError("Invalid GeoJSON")
-    features = body.get("features") if body.get("type") == "FeatureCollection" else [body]
-    if not isinstance(features, list) or len(features) > 10000:
-        raise ValueError("Invalid GeoJSON features")
-    output, count = [], 0
-    for feature in features:
-        if not isinstance(feature, dict):
-            raise ValueError("Invalid feature")
-        geometry = feature.get("geometry") if feature.get("type") == "Feature" else feature
-        if not isinstance(geometry, dict) or geometry.get("type") not in ("Polygon", "MultiPolygon"):
-            raise ValueError("Only polygon publications are supported")
-        coordinates = geometry.get("coordinates")
-        polygons = [coordinates] if geometry["type"] == "Polygon" else coordinates
-        if not isinstance(polygons, list) or not polygons:
-            raise ValueError("Invalid polygons")
-        for polygon in polygons:
-            if not isinstance(polygon, list) or not polygon:
-                raise ValueError("Invalid rings")
-            for ring in polygon:
-                if not isinstance(ring, list) or len(ring) < 4 or ring[0] != ring[-1]:
-                    raise ValueError("Invalid closed ring")
-                for point in ring:
-                    count += 1
-                    if (count > MAX_POINTS or not isinstance(point, list) or len(point) != 2
-                            or any(isinstance(x, bool) or not isinstance(x, (int, float)) or not math.isfinite(x) for x in point)
-                            or not -180 <= point[0] <= 180 or not -85 <= point[1] <= 85):
-                        raise ValueError("Invalid or excessive coordinates")
-        output.append({"type": "Feature", "properties": {},
-                       "geometry": {"type": geometry["type"], "coordinates": geometry["coordinates"]}})
-    return {"type": "FeatureCollection", "features": output}
 
-
-def load_geometry(reference):
+def download_geometry(reference):
     result = {"status": "delivery_unavailable", "revision": str(reference.revision),
               "relation": reference.geometry_relation, "source": reference.geometry_source, "geojson": None}
     options = []
@@ -108,10 +74,17 @@ def load_geometry(reference):
             expected_hash = row.get("geometry_sha256")
             if not expected_hash or hashlib.sha256(raw).hexdigest() != expected_hash:
                 return {**result, "status": "integrity_failure"}
-            return {**result, "status": "available", "geojson": safe_geojson(json.loads(raw))}
+            return {**result, "status": "available", "geojson": safe_geojson(json.loads(raw)), "sha256": expected_hash}
     except (requests.RequestException, ValueError, TypeError, KeyError):
         return result
     except Exception:
         # Auth/configuration errors must not expose tokens or signed URLs via GraphQL.
         return result
     return result
+
+
+
+def load_geometry(reference):
+    """Deprecated local display alias; MSR transport uses download_geometry."""
+    from location.geography import legacy_geometry
+    return legacy_geometry(reference)

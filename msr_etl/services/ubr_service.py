@@ -105,6 +105,7 @@ class UBRLocationService(MsrETLService):
                  gvh: str = None,
                  village: str = None,
                  msr_district_id: int = None,
+                 district_uuid: str = None,
                  source: DataSource = None,
                  adapter: DataAdapter = None,
                  sink: DataSink = None):
@@ -115,6 +116,13 @@ class UBRLocationService(MsrETLService):
         if ta and not district:
             raise ValueError("district is required when ta is provided")
 
+        if district_uuid:
+            from msr_etl.geo_access import resolve_district
+            from msr_etl.apps import MsrEtlConfig
+            from msr_etl.source_registry import get_connector
+            if get_connector(source_type) != 'msr_geo_v3':
+                raise ValueError('district_uuid is only supported by the geographic source')
+            msr_district_id = resolve_district(user, MsrEtlConfig.get_source_config(source_type)['source_instance'], msr_district_id, district_uuid)
         source_cls, adapter_cls = resolve_location_source(source_type)
         resolved_source_type = source_type or DEFAULT_SOURCE_TYPE
 

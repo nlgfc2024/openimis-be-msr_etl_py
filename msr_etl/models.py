@@ -75,3 +75,15 @@ class MsrEtlUpload(models.Model):
 
     class Meta:
         db_table = "msr_etl_upload"
+
+
+class MsrGeoSyncState(models.Model):
+    """MSR source/district write ordering, independent of Mapping installation."""
+    source_instance = models.CharField(max_length=100)
+    district_msr_id = models.PositiveBigIntegerField()
+    last_applied_unit_id = models.PositiveBigIntegerField(default=0)
+    last_successful_sync = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'msr_etl_geo_sync_state'
+        constraints = [models.UniqueConstraint(fields=['source_instance','district_msr_id'], name='msr_geo_source_district_unique')]

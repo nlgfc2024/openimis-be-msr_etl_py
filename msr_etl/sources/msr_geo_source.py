@@ -1,12 +1,12 @@
-"""Legacy source registration reusing the mapping-owned district collector."""
-from mapping.providers.district import DistrictSource
+"""Legacy source registration reusing the MSR ETL district collector."""
+from msr_etl.providers.district import DistrictSource
 from msr_etl.apps import MsrEtlConfig
 from msr_etl.sources.base import StagedDataSource
 from msr_etl.sources.msr_v3_geo import MsrV3GeoClient
 
 
 class MsrGeoSource(DistrictSource, StagedDataSource):
-    policy = "legacy"
+    policy = "msr_etl"
 
     def __init__(self, source_type, msr_district_id=None):
         config = MsrEtlConfig.get_source_config(source_type)

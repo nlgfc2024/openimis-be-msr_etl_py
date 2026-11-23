@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 from django.test import SimpleTestCase
 
 from msr_etl.apps import MsrEtlConfig
-from msr_etl.geometry_access import load_geometry, safe_geojson
+from msr_etl.geometry_access import download_geometry as load_geometry, safe_geojson
 
 
 POLYGON = {"type": "Polygon", "coordinates": [[[33, -14], [34, -14], [34, -13], [33, -14]]]}

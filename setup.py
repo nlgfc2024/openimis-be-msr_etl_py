@@ -9,7 +9,7 @@ os.chdir(os.path.normpath(os.path.join(os.path.abspath(__file__), os.pardir)))
 
 setup(
     name='openimis-be-msr_etl',
-    version='1.1.0',
+    version='1.2.0',
     packages=find_packages(),
     include_package_data=True,
     license='GNU AGPL v3',
@@ -20,7 +20,6 @@ setup(
     author='Kamil Malinowski',
     author_email='kmalinowski@soldevelo.com',
     install_requires=[
-        'openimis-be-mapping>=0.2.0',
         'django',
         'requests',
         'pytest-django',
@@ -32,7 +31,7 @@ setup(
         'xlrd',
         'openimis-be-core',
         'openimis-be-individual',
-        'openimis-be-location',
+        'openimis-be-location>=1.12.0',
     ],
     classifiers=[
         'Environment :: Web Environment',
