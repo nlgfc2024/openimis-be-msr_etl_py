@@ -1,6 +1,8 @@
 import json
 import logging
 
+from django.db import transaction
+
 from individual.apps import IndividualConfig
 from individual.data_source import DATA_SOURCE_FIELD, data_source_q
 from individual.models import Individual, IndividualDataSource
@@ -9,12 +11,27 @@ from msr_etl.apps import MsrEtlConfig
 from msr_etl.kobo_documents import link_documents
 from msr_etl.kobo_review import compare, match_fields
 from msr_etl.models import KoboSubmission
+from msr_etl.signals import kobo_submission_applied
 from msr_etl.sinks.individual_import_sink import IndividualImportSink
 
 logger = logging.getLogger(__name__)
 
 # Columns the individual import takes besides its schema's properties (individual workflows' header check)
 _IMPORT_EXTRA_COLUMNS = {"recipient_info", "group_code", "individual_role", DATA_SOURCE_FIELD, "ID"}
+APPLIED_STATUSES = (KoboSubmission.Status.IMPORTED, KoboSubmission.Status.UPDATED)
+
+
+def _send_applied(submission, individual, status):
+    """Tell receivers (e.g. appraisal) an application reached its Individual; a receiver error is logged, not
+    raised, so it can't undo or interrupt the import."""
+    instance = KoboSubmission.objects.filter(**submission).first()
+    if instance is None:
+        return
+    for receiver, result in kobo_submission_applied.send_robust(
+            sender=KoboSubmission, submission=instance, individual=individual, status=status):
+        if isinstance(result, Exception):
+            logger.error("kobo_submission_applied receiver %s failed for Kobo submission %s",
+                         receiver, instance.kobo_id, exc_info=result)
 
 
 class KoboIndividualImportSink(IndividualImportSink):
@@ -137,3 +154,5 @@ class KoboIndividualImportSink(IndividualImportSink):
         # Its documents go with it: to the record it created or updated, or the one it was held from
         if individual is not None:
             link_documents(submission, individual)
+        if status in APPLIED_STATUSES:
+            transaction.on_commit(lambda: _send_applied(submission, individual, status))
