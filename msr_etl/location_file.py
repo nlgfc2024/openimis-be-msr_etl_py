@@ -418,3 +418,19 @@ def current_location_code(location_type, code):
             return code
         code = change.new_code
     return code
+
+
+def former_location_codes(location_type, code):
+    """The codes the location now coded ``code`` had before: those replaced by it, directly or through others."""
+    from msr_etl.models import MsrEtlLocationCodeChange
+
+    former, pending = set(), [code]
+    while pending:
+        current = pending.pop()
+        for old in MsrEtlLocationCodeChange.objects.filter(location_type=location_type, new_code=current) \
+                .values_list("old_code", flat=True):
+            if old not in former and old != code:
+                former.add(old)
+                pending.append(old)
+    return former
+

@@ -149,3 +149,20 @@ class MsrEtlConfig(AppConfig):
         from core.models import ModuleConfiguration
         cfg = ModuleConfiguration.get_or_default(self.name, DEFAULT_CONFIG)
         self._load_config(cfg)
+        self._share_location_code_history()
+
+    @staticmethod
+    def _share_location_code_history():
+        """Let enrolment's conditions on answered location codes also match codes replaced since (no-op without
+        enrolment, or with an enrolment that has no such hook)."""
+        from django.apps import apps
+
+        if not apps.is_installed("enrolment"):
+            return
+        try:
+            from enrolment.locations import register_location_code_history
+        except ImportError:
+            return
+        from msr_etl.location_file import former_location_codes
+
+        register_location_code_history(former_location_codes)
