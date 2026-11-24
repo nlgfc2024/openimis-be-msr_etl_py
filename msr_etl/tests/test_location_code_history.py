@@ -1,3 +1,6 @@
+import importlib.util
+from unittest import skipUnless
+
 from django.test import TestCase
 
 from msr_etl.location_file import current_location_code, former_location_codes
@@ -18,6 +21,8 @@ class LocationCodeHistoryTest(TestCase):
         self.assertEqual(former_location_codes("R", "325"), set())
         self.assertEqual(current_location_code("R", "LL"), "206")
 
+    @skipUnless(importlib.util.find_spec("enrolment") and importlib.util.find_spec("enrolment.locations"),
+                "needs an enrolment with the location code history hook (openimis-be-enrolment_py#14)")
     def test_enrolment_gets_the_history_when_installed(self):
         from enrolment.locations import location_codes
 
