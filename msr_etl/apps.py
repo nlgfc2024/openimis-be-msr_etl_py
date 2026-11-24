@@ -118,9 +118,14 @@ class MsrEtlConfig(AppConfig):
     job_stale_after_hours = None
 
     sources = None
+    _legacy_ubr_config = {}
 
     @classmethod
     def _load_config(cls, cfg):
+        legacy_keys = {'auth_type': 'auth_type', 'auth_basic_username': 'auth_basic_username',
+                       'auth_basic_password': 'auth_basic_password', 'auth_bearer_token': 'auth_bearer_token',
+                       'source_headers': 'headers', 'ubr_programme_parameter_id': 'programme_parameter_id'}
+        cls._legacy_ubr_config = {target: cfg[key] for key, target in legacy_keys.items() if key in cfg}
         # Saved configuration may predate staging/sweeper settings.
         for field in DEFAULT_CONFIG.keys() | cfg.keys():
             if hasattr(MsrEtlConfig, field):
@@ -133,9 +138,12 @@ class MsrEtlConfig(AppConfig):
         """
         defaults = DEFAULT_CONFIG["sources"].get(source_type) or {}
         saved = (cls.sources or {}).get(source_type) or {}
-        return {**defaults, **saved}
+        legacy = cls._legacy_ubr_config if source_type == 'ubr' else {}
+        return {**defaults, **legacy, **saved}
 
     def ready(self):
         from core.models import ModuleConfiguration
         cfg = ModuleConfiguration.get_or_default(self.name, DEFAULT_CONFIG)
         self._load_config(cfg)
+        from msr_etl.household_gps import connect_signals
+        connect_signals()

@@ -4,6 +4,7 @@ from typing import Any, Iterable
 from msr_etl.adapters.base import DataAdapter
 from msr_etl.apps import MsrEtlConfig
 from location.models import Location
+from msr_etl.household_gps import GPS_COLUMN, household_gps
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +54,7 @@ class UBRIndividualAdapter(DataAdapter):
             wealth_quintile = row.get("pmt_cut_off", {}).get("wealth_quintile")
 
             members = row.get("household_members", [])
+            gps = household_gps(row)
             for member in members:
                 # Check for missing or empty first_name, last_name, or date_of_birth
                 if not member.get("first_name") or not member.get("last_name") or not member.get("date_of_birth"):
@@ -75,6 +77,7 @@ class UBRIndividualAdapter(DataAdapter):
                     continue
                 
                 result_row = {
+                    GPS_COLUMN: gps,
                     "group_code": group_code,
                     "form_number": group_code,
                     "first_name": member.get("first_name"),

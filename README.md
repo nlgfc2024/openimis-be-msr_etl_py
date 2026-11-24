@@ -577,3 +577,10 @@ and `materialize_msr_geography --source-type msr_geo_v3 --district-id 13 --downl
 seeds local display publications from existing accepted references. Finish
 imports and stop old workers before migration. See the Mapping repository's
 `docs/MSR_IMPORT_OWNERSHIP.md` for the coordinated deployment/rollback procedure.
+## Household GPS retention
+
+The existing MSR household import now retains valid household coordinates through
+CoreMIS's normal upload and household approval workflow. See
+[Household GPS retention](docs/HOUSEHOLD_GPS_RETENTION.md) for validation,
+configuration compatibility, tests and activation limits. Boundary synchronization
+continues using its separate source configuration.

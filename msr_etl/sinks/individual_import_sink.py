@@ -8,6 +8,7 @@ from individual.models import Individual, IndividualDataSourceUpload
 from individual.services import IndividualImportService
 from workflow.services import WorkflowService
 from msr_etl.apps import MsrEtlConfig
+from msr_etl.household_gps import GPS_COLUMN, batch_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -50,11 +51,13 @@ class IndividualImportSink(DataSink):
     def __init__(self, user: User, source_type: str = None):
         super().__init__()
         self.source_type = source_type or DEFAULT_DATA_SOURCE
-        self.service = IndividualImportService(resolve_import_user(user))
+        self.import_user = resolve_import_user(user)
+        self.service = IndividualImportService(self.import_user)
         self.import_new_workflow = self.get_workflow(IMPORT_NEW_INDIVIDUALS)
         self.update_existing_workflow = self.get_workflow(UPDATE_EXISTING_INDIVIDUALS)
 
     def push(self, data: list[dict], batch_identifier=None):
+        batch_metadata(data, self.source_type)  # Reject contradictory household pairs before any import.
         data = [self._scope_to_source(record) for record in data]
         existing_records, new_records = self._split_existing_and_new(data)
 
@@ -72,20 +75,30 @@ class IndividualImportSink(DataSink):
             logger.debug("No existing record to update")
 
     def _import_new_records(self, new_records, batch_identifier):
+        service, new_records = self._household_service(new_records)
         import_file = data_to_file(new_records, f'import_{batch_identifier}')
-        result_new = self.service.import_individuals(
+        result_new = service.import_individuals(
             import_file, self.import_new_workflow, GROUP_AGGREGATION_COLUMN
         )
         self._raise_if_upload_failed(result_new, 'import')
         logger.debug(f"Imported {len(new_records)} new records with {result_new}")
 
     def _update_existing_records(self, existing_records, batch_identifier):
+        service, existing_records = self._household_service(existing_records)
         update_file = data_to_file(existing_records, f'update_{batch_identifier}')
-        result_existing = self.service.import_individuals(
+        result_existing = service.import_individuals(
             update_file, self.update_existing_workflow, GROUP_AGGREGATION_COLUMN
         )
         self._raise_if_upload_failed(result_existing, 'update')
         logger.debug(f"Updated {len(existing_records)} existing records with {result_existing}")
+
+    def _household_service(self, records):
+        metadata = batch_metadata(records, self.source_type)
+        service = self.service
+        if metadata:
+            from msr_etl.sinks.household_gps_import import HouseholdGpsImportService
+            service = HouseholdGpsImportService(self.import_user, metadata)
+        return service, [{key: value for key, value in row.items() if key != GPS_COLUMN} for row in records]
 
     def _raise_if_upload_failed(self, result: dict, action: str):
         upload_uuid = (result or {}).get('data', {}).get('upload_uuid')
