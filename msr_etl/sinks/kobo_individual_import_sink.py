@@ -1,6 +1,8 @@
 import json
 import logging
 
+from django.db import transaction
+
 from individual.apps import IndividualConfig
 from individual.data_source import DATA_SOURCE_FIELD, data_source_q
 from individual.models import Individual, IndividualDataSource
@@ -9,12 +11,22 @@ from msr_etl.apps import MsrEtlConfig
 from msr_etl.kobo_documents import link_documents
 from msr_etl.kobo_review import compare, match_fields
 from msr_etl.models import KoboSubmission
+from msr_etl import signals
 from msr_etl.sinks.individual_import_sink import IndividualImportSink
 
 logger = logging.getLogger(__name__)
 
 # Columns the individual import takes besides its schema's properties (individual workflows' header check)
 _IMPORT_EXTRA_COLUMNS = {"recipient_info", "group_code", "individual_role", DATA_SOURCE_FIELD, "ID"}
+APPLIED_STATUSES = (KoboSubmission.Status.IMPORTED, KoboSubmission.Status.UPDATED)
+
+
+def _send_applied(submission, individual, status):
+    """Tell receivers (e.g. appraisal) an application reached its Individual."""
+    instance = KoboSubmission.objects.filter(**submission).first()
+    if instance is not None:
+        signals.send(signals.kobo_submission_applied, KoboSubmission, submission=instance, individual=individual,
+                     status=status)
 
 
 class KoboIndividualImportSink(IndividualImportSink):
@@ -137,3 +149,5 @@ class KoboIndividualImportSink(IndividualImportSink):
         # Its documents go with it: to the record it created or updated, or the one it was held from
         if individual is not None:
             link_documents(submission, individual)
+        if status in APPLIED_STATUSES:
+            transaction.on_commit(lambda: _send_applied(submission, individual, status))
